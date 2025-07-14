@@ -14,4 +14,14 @@ enum RoleEnum: string
             self::ADMIN => 'Administrateur',
         };
     }
+    
+    public function isAdmin(): bool
+    {
+        return $this === self::ADMIN;
+    }
+    
+    public function isClient(): bool
+    {
+        return $this === self::CLIENT;
+    }
 }

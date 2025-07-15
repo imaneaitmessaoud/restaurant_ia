@@ -1,38 +1,39 @@
-🍽️ Gestion des commandes Restaurant avec IA
-Bienvenue dans le projet Gestion des commandes Restaurant avec IA ! 🎉 Ce projet est une application complète pour gérer les commandes dans un restaurant avec une application mobile Flutter, un backend Symfony, et une base de données MySQL. L’IA est intégrée pour optimiser la gestion et l’expérience client.
+# 🍽️ Gestion des commandes Restaurant avec IA
 
-📂 Structure du projet
-backend/ 🖥️ : Backend Symfony avec API Platform, gestion des commandes, produits, utilisateurs et base de données MySQL.
+Bienvenue dans le projet **Gestion des commandes Restaurant avec IA** ! 🎉  
+Ce projet est une application complète pour gérer les commandes dans un restaurant avec une application mobile Flutter, un backend Symfony, et une base de données MySQL. L’IA est intégrée pour optimiser la gestion et l’expérience client.
 
-frontend/ 📱 : Application mobile Flutter pour passer des commandes et interagir avec le restaurant.
+---
 
-.github/workflows/ 🚀 : Configuration CI/CD pour automatiser tests et déploiement.
+## 📂 Structure du projet
 
-README.md 📜 : Ce fichier, qui contient toutes les instructions nécessaires.
+- **backend/** 🖥️ : Backend Symfony avec API Platform, gestion des commandes, produits, utilisateurs et base de données MySQL.  
+- **frontend/** 📱 : Application mobile Flutter pour passer des commandes et interagir avec le restaurant.  
+- **.github/workflows/** 🚀 : Configuration CI/CD pour automatiser tests et déploiement.  
+- **README.md** 📜 : Ce fichier, qui contient toutes les instructions nécessaires.
 
-🛠️ Prérequis
+---
+
+## 🛠️ Prérequis
+
 Avant de commencer, assurez-vous d’avoir installé :
 
-PHP 8.2 ☕ (XAMPP recommandé)
+- PHP 8.2 ☕ (XAMPP recommandé)  
+- Composer 2.8.9+ 🧩  
+- Symfony CLI (optionnel)  
+- MySQL 8.0+ 🗄️  
+- Flutter SDK et Flutter CLI  
+- Git 🐙
 
-Composer 2.8.9+ 🧩
+---
 
-Symfony CLI (optionnel)
+## ⚙️ Installation et lancement du backend Symfony
 
-MySQL 8.0+ 🗄️
-
-Flutter SDK et Flutter CLI
-
-Git 🐙
-
-⚙️ Installation et lancement du backend Symfony
-1️⃣ Cloner le dépôt
-
-bash
-Copier
-Modifier
+### 1️⃣ Cloner le dépôt  
+```bash
 git clone https://github.com/imaneaitmessaoud/restaurant_ia.git
 cd backend
+
 2️⃣ Installer les dépendances Composer
 
 bash

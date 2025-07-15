@@ -5,9 +5,17 @@ namespace App\DataFixtures;
 use App\Entity\User;
 use App\Entity\Conversation;
 use App\Entity\Message;
+use App\Entity\MenuCategory;
+use App\Entity\MenuItem;
+use App\Entity\MenuPersonalization;
+use App\Entity\Commande;
+use App\Entity\CommandeItem;
 use App\Enum\RoleEnum;
 use App\Enum\StatutUserEnum;
 use App\Enum\SenderTypeEnum;
+use App\Enum\StatutCommandeEnum;
+use App\Enum\TypeServiceEnum;
+use App\Enum\PersonalizationTypeEnum;
 use Doctrine\Bundle\FixturesBundle\Fixture;
 use Doctrine\Persistence\ObjectManager;
 
@@ -15,95 +23,104 @@ class AppFixtures extends Fixture
 {
     public function load(ObjectManager $manager): void
     {
-        // 1. Créer des utilisateurs
+        // 1. Utilisateurs
         $admin = new User();
-        $admin->setNom('Admin Restaurant');
-        $admin->setEmail('admin@restaurant.ma');
-        $admin->setTelephone('+212661111111');
-        $admin->setPassword('$2y$13$hashedpassword'); // À hasher en production
-        $admin->setRole(RoleEnum::ADMIN);
+        $admin->setNom('Admin Restaurant')->setEmail('admin@restaurant.ma')
+              ->setTelephone('+212661111111')->setPassword('$2y$13$hashedpassword')
+              ->setRole(RoleEnum::ADMIN);
         $manager->persist($admin);
 
         $client1 = new User();
-        $client1->setNom('Ahmed Benali');
-        $client1->setEmail('ahmed@email.com');
-        $client1->setTelephone('+212662222222');
-        $client1->setPassword('$2y$13$hashedpassword');
-        $client1->setRole(RoleEnum::CLIENT);
+        $client1->setNom('Ahmed Benali')->setEmail('ahmed@email.com')
+                ->setTelephone('+212662222222')->setPassword('$2y$13$hashedpassword');
         $manager->persist($client1);
 
-        $client2 = new User();
-        $client2->setNom('Fatima Zahra');
-        $client2->setEmail('fatima@email.com');
-        $client2->setTelephone('+212663333333');
-        $client2->setPassword('$2y$13$hashedpassword');
-        $client2->setRole(RoleEnum::CLIENT);
-        $manager->persist($client2);
+        // 2. Catégories de menu
+        $pizzas = new MenuCategory();
+        $pizzas->setNom('Pizzas')->setDescription('Nos délicieuses pizzas artisanales')
+               ->setOrdre(1);
+        $manager->persist($pizzas);
 
-        // 2. Créer des conversations
-        // Conversation 1: Client inscrit
+        $boissons = new MenuCategory();
+        $boissons->setNom('Boissons')->setDescription('Boissons fraîches et chaudes')
+                 ->setOrdre(2);
+        $manager->persist($boissons);
+
+        // 3. Articles de menu
+        $margherita = new MenuItem();
+        $margherita->setNom('Pizza Margherita')->setDescription('Tomate, mozzarella, basilic')
+                   ->setPrixFloat(65.00)->setCategory($pizzas)
+                   ->setIngredients(['tomate', 'mozzarella', 'basilic'])
+                   ->setTempsPreparation(15);
+        $manager->persist($margherita);
+
+        $pepperoni = new MenuItem();
+        $pepperoni->setNom('Pizza Pepperoni')->setDescription('Tomate, mozzarella, pepperoni')
+                  ->setPrixFloat(75.00)->setCategory($pizzas)
+                  ->setIngredients(['tomate', 'mozzarella', 'pepperoni'])
+                  ->setTempsPreparation(18);
+        $manager->persist($pepperoni);
+
+        $coca = new MenuItem();
+        $coca->setNom('Coca-Cola')->setDescription('Boisson gazeuse 33cl')
+              ->setPrixFloat(15.00)->setCategory($boissons)
+              ->setTempsPreparation(1);
+        $manager->persist($coca);
+
+        // 4. Personnalisations
+        $taillePizza = new MenuPersonalization();
+        $taillePizza->setMenuItem($margherita)->setType(PersonalizationTypeEnum::TAILLE)
+                    ->setOptionsJson([
+                        'individuelle' => 'Individuelle (26cm)',
+                        'moyenne' => 'Moyenne (30cm)', 
+                        'grande' => 'Grande (34cm)'
+                    ])
+                    ->setObligatoire(true)->setPrixSupplementFloat(0);
+        $manager->persist($taillePizza);
+
+        // 5. Conversations et Messages
         $conv1 = new Conversation();
-        $conv1->setPhoneNumber('+212662222222');
-        $conv1->setClientName('Ahmed Benali');
-        $conv1->setUser($client1);
-        $conv1->setContext('Commande pizza');
+        $conv1->setPhoneNumber('+212662222222')->setClientName('Ahmed Benali')
+              ->setUser($client1);
         $manager->persist($conv1);
 
-        // Conversation 2: Client invité
-        $conv2 = new Conversation();
-        $conv2->setPhoneNumber('+212664444444');
-        $conv2->setClientName('Omar Guest');
-        // Pas d'utilisateur (client invité)
-        $manager->persist($conv2);
-
-        // 3. Créer des messages pour conv1
-        $messages1 = [
-            ['Bonjour, je voudrais commander', SenderTypeEnum::CLIENT],
-            ['Bonjour Ahmed ! Je peux vous aider avec votre commande', SenderTypeEnum::BOT],
-            ['Je voudrais une pizza margherita grande', SenderTypeEnum::CLIENT],
-            ['Excellente choix ! Cela fera 90 DH. Confirmez-vous ?', SenderTypeEnum::BOT],
-            ['Oui, je confirme', SenderTypeEnum::CLIENT],
-            ['Parfait ! Votre commande est en préparation', SenderTypeEnum::HUMAIN],
+        $messages = [
+            ['Bonjour, je voudrais commander une pizza', SenderTypeEnum::CLIENT],
+            ['Bonjour Ahmed ! Quelle pizza souhaitez-vous ?', SenderTypeEnum::BOT],
+            ['Une margherita grande s\'il vous plaît', SenderTypeEnum::CLIENT],
         ];
 
-        foreach ($messages1 as $index => $messageData) {
+        foreach ($messages as $index => $messageData) {
             $message = new Message();
-            $message->setContenu($messageData[0]);
-            $message->setSenderType($messageData[1]);
-            $message->setConversation($conv1);
-            
-            // Échelonner les timestamps (5 min d'écart)
-            $timestamp = (new \DateTimeImmutable())->modify('-' . (count($messages1) - $index) * 5 . ' minutes');
+            $message->setContenu($messageData[0])->setSenderType($messageData[1])
+                    ->setConversation($conv1);
+            $timestamp = (new \DateTimeImmutable())->modify('-' . (count($messages) - $index) * 5 . ' minutes');
             $message->setTimestamp($timestamp);
-            
-            if ($index < 4) { // Marquer les 4 premiers comme lus
-                $message->markAsRead();
-            }
-            
             $manager->persist($message);
         }
 
-        // 4. Créer des messages pour conv2
-        $messages2 = [
-            ['Salut', SenderTypeEnum::CLIENT],
-            ['Bonjour ! Comment puis-je vous aider ?', SenderTypeEnum::BOT],
-            ['Vous avez quoi comme menu ?', SenderTypeEnum::CLIENT],
-            ['Voici notre menu : pizzas, burgers, salades...', SenderTypeEnum::BOT],
-        ];
+        // 6. Commandes
+        $commande1 = new Commande();
+        $commande1->setUser($client1)->setTypeService(TypeServiceEnum::LIVRAISON)
+                  ->setAdresseLivraison('123 Rue Mohammed V, Casablanca')
+                  ->setStatut(StatutCommandeEnum::EN_PREPARATION);
+        $manager->persist($commande1);
 
-        foreach ($messages2 as $index => $messageData) {
-            $message = new Message();
-            $message->setContenu($messageData[0]);
-            $message->setSenderType($messageData[1]);
-            $message->setConversation($conv2);
-            
-            $timestamp = (new \DateTimeImmutable())->modify('-' . (count($messages2) - $index) * 3 . ' minutes');
-            $message->setTimestamp($timestamp);
-            
-            $manager->persist($message);
-        }
+        // 7. Items de commande
+        $item1 = new CommandeItem();
+        $item1->setMenuItem($margherita)->setCommande($commande1)
+              ->setQuantite(1)->setPrixUnitaireFloat(90.00)
+              ->setPersonalisationJson(['taille' => 'grande']);
+        $manager->persist($item1);
 
-        // 5. Sauvegarder tout
+        $item2 = new CommandeItem();
+        $item2->setMenuItem($coca)->setCommande($commande1)
+              ->setQuantite(2)->setPrixUnitaireFloat(15.00);
+        $manager->persist($item2);
+
+        // Calculer le total
+        $commande1->setTotalFloat(90.00 + (15.00 * 2) + 15.00); // +15 DH livraison
+
         $manager->flush();
     }
 }

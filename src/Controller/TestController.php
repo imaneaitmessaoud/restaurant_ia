@@ -7,6 +7,12 @@ use App\Enum\StatutUserEnum;
 use App\Enum\StatutCommandeEnum;
 use App\Enum\SenderTypeEnum;
 use App\Enum\TypeServiceEnum;
+use App\Enum\PersonalizationTypeEnum;
+use App\Entity\Commande;
+use App\Entity\CommandeItem;
+use App\Entity\MenuCategory;
+use App\Entity\MenuPersonalization;
+use App\Entity\MenuItem;
 use App\Entity\User; 
 use App\Entity\Conversation;  // ← NOUVEAU
 use App\Entity\Message;  
@@ -41,7 +47,33 @@ class TestController extends AbstractController
             'sender_types' => [
                 'BOT' => SenderTypeEnum::BOT->value,
                 'is_automated' => SenderTypeEnum::BOT->isAutomated(),
-            ]
+            ],
+            /**
+             * dynamiquement généré à partir de l'énumération PersonalizationTypeEnum
+             */
+            'personalizations' => array_reduce(PersonalizationTypeEnum::cases(), function ($acc, $enum) {
+                $acc[$enum->name] = $enum->value;
+                $acc[strtolower($enum->name) . '_label'] = $enum->getLabel();
+                return $acc;
+            }, []),
+
+            /* 'personalizations' => [
+                'TAILLE' => PersonalizationTypeEnum::TAILLE->value,
+                'SUCRE' => PersonalizationTypeEnum::SUCRE->value,
+                'GLACE' => PersonalizationTypeEnum::GLACE->value,
+                'PATE' => PersonalizationTypeEnum::PATE->value,
+                'FROMAGE' => PersonalizationTypeEnum::FROMAGE->value,
+                'CUISSON' => PersonalizationTypeEnum::CUISSON->value,
+
+                'taille_label' => PersonalizationTypeEnum::TAILLE->getLabel(),
+                'sucre_label' => PersonalizationTypeEnum::SUCRE->getLabel(),
+                'glace_label' => PersonalizationTypeEnum::GLACE->getLabel(),
+                'pate_label' => PersonalizationTypeEnum::PATE->getLabel(),
+                'fromage_label' => PersonalizationTypeEnum::FROMAGE->getLabel(),
+                'cuisson_label' => PersonalizationTypeEnum::CUISSON->getLabel(),
+            ]*/
+
+
         ];
         
         return $this->json([
@@ -74,7 +106,7 @@ class TestController extends AbstractController
             'user_identifier' => $user->getUserIdentifier(),
         ]);
     }
-    #[Route('/test/conversation', name: 'test_conversation')]
+  /*  #[Route('/test/conversation', name: 'test_conversation')]
 public function testConversation(): JsonResponse
 {
     // Créer un utilisateur inscrit
@@ -297,6 +329,10 @@ public function testSystemComplet(): JsonResponse
         ]
     ]);
 }
+
+
+
+
 #[Route('/test/database', name: 'test_database')]
 public function testDatabase(EntityManagerInterface $em): JsonResponse
 {
@@ -323,6 +359,181 @@ public function testDatabase(EntityManagerInterface $em): JsonResponse
         'sample_users' => array_map(fn($u) => $u->getFullInfo(), array_slice($users, 0, 2)),
         'last_conversation' => $lastConv?->getFullInfo(),
         'database_working' => true,
+    ]);
+}
+*/
+
+    /**
+     * Test de création d'une commande complète
+     */
+
+#[Route('/test/commande', name: 'test_commande')]
+
+public function testCommande(): JsonResponse
+{
+    // Créer un utilisateur
+    $user = new User();
+    $user->setNom('Ahmed Benali');
+    $user->setEmail('ahmed@restaurant.ma');
+    $user->setTelephone('+212661234567');
+    $user->setPassword('password123');
+
+    // Créer un item de menu temporaire
+    $pizza = new MenuItem();
+    $pizza->setNom('Pizza Margherita');
+    $pizza->setPrix('65.00');
+
+    // Créer une commande
+    $commande = new Commande();
+    $commande->setUser($user);
+    $commande->setTypeService(TypeServiceEnum::LIVRAISON);
+    $commande->setAdresseLivraison('123 Rue Mohammed V, Casablanca');
+    $commande->setCommentaire('Sonnez au portail SVP');
+
+    // Créer des items de commande
+    $item1 = new CommandeItem();
+    $item1->setMenuItem($pizza);
+    $item1->setQuantite(2);
+    $item1->setPrixUnitaireFloat(65.00);
+    $item1->setPersonalisationJson([
+        'taille' => 'Grande',
+        'ingredients_extra' => ['olives', 'champignons']
+    ]);
+    $item1->setCommande($commande);
+
+    $item2 = new CommandeItem();
+    $item2->setMenuItem($pizza);
+    $item2->setQuantite(1);
+    $item2->setPrixUnitaireFloat(45.00);
+    $item2->setPersonalisationJson([
+        'taille' => 'Moyenne'
+    ]);
+    $item2->setCommande($commande);
+
+    // Ajouter les items à la commande (relation bidirectionnelle)
+    $commande->addCommandeItem($item1);
+    $commande->addCommandeItem($item2);
+
+    // Calculer et mettre à jour le total
+    $commande->updateTotal();
+
+    return $this->json([
+        'status' => 'success',
+        'message' => 'Commande complète créée avec succès !',
+        'commande_info' => $commande->getFullInfo(),
+        'items' => [
+            'item1' => $item1->getFullInfo(),
+            'item2' => $item2->getFullInfo(),
+        ],
+        'totaux' => [
+            'items_count' => $commande->getItemsCount(),
+            'total_quantity' => $commande->getTotalQuantity(),
+            'calculated_total' => $commande->calculateTotal(),
+            'frais_livraison' => $commande->isDelivery() ? 15.00 : 0,
+        ],
+        'relations_test' => [
+            'user_has_commandes' => $user->getCommandes()->count(),
+            'commande_user_name' => $commande->getUser()->getNom(),
+            'item1_commande_ref' => $item1->getCommande()->getReference(),
+        ]
+    ]);
+}
+
+
+#[Route('/test/full-commande', name: 'test_full_commande')]
+public function testFullCommande(): JsonResponse
+{
+    // --- Création utilisateur ---
+    $user = new User();
+    $user->setNom('Ahmed Benali');
+    $user->setEmail('ahmed@restaurant.ma');
+    $user->setTelephone('+212661234567');
+    $user->setPassword('password123');
+
+    // --- Création catégorie menu ---
+    $category = new MenuCategory();
+    $category->setNom('Pizzas');
+    $category->setDescription('Toutes les pizzas');
+    $category->setOrdre(1);
+    $category->setActif(true);
+
+    // --- Création menu item ---
+    $pizza = new MenuItem();
+    $pizza->setNom('Pizza Margherita');
+    $pizza->setPrix('65.00');
+    $pizza->setCategory($category);
+    $category->addMenuItem($pizza); // bidirectionnel
+
+    // --- Création personnalisation ---
+    $taillePersonalization = new MenuPersonalization();
+    $taillePersonalization->setType(\App\Enum\PersonalizationTypeEnum::TAILLE);
+    $taillePersonalization->setOptionsJson([
+        'Petite' => 'Petite taille',
+        'Moyenne' => 'Taille moyenne',
+        'Grande' => 'Grande taille',
+    ]);
+    $taillePersonalization->setPrixSupplementFloat(5.00);
+    $taillePersonalization->setMenuItem($pizza);
+    $pizza->addPersonalization($taillePersonalization); // si ta méthode existe
+
+    // --- Création commande ---
+    $commande = new Commande();
+    $commande->setUser($user);
+    $commande->setTypeService(TypeServiceEnum::LIVRAISON);
+    $commande->setAdresseLivraison('123 Rue Mohammed V, Casablanca');
+    $commande->setCommentaire('Sonnez au portail SVP');
+
+    // --- Création items de commande ---
+    $item1 = new CommandeItem();
+    $item1->setMenuItem($pizza);
+    $item1->setQuantite(2);
+    $item1->setPrixUnitaireFloat(65.00);
+    $item1->setPersonalisationJson([
+        'taille' => 'Grande',
+        'ingredients_extra' => ['olives', 'champignons'],
+    ]);
+    $item1->setCommande($commande);
+    $commande->addCommandeItem($item1);
+
+    $item2 = new CommandeItem();
+    $item2->setMenuItem($pizza);
+    $item2->setQuantite(1);
+    $item2->setPrixUnitaireFloat(45.00);
+    $item2->setPersonalisationJson([
+        'taille' => 'Moyenne',
+    ]);
+    $item2->setCommande($commande);
+    $commande->addCommandeItem($item2);
+
+    // --- Calcul total ---
+    $commande->updateTotal();
+
+    return $this->json([
+        'status' => 'success',
+        'message' => 'Commande complète avec catégorie, item, personnalisation créée !',
+        'user' => [
+            'nom' => $user->getNom(),
+            'email' => $user->getEmail(),
+        ],
+        'category' => $category->getFullInfo(),
+        'menu_item' => [
+            'id' => $pizza->getId(),
+            'nom' => $pizza->getNom(),
+            'prix' => $pizza->getPrix(),
+            'category_name' => $pizza->getCategory()?->getNom(),
+            'personalizations' => array_map(fn($p) => $p->getFullInfo(), $pizza->getPersonalizations()->toArray()),
+        ],
+        'commande' => $commande->getFullInfo(),
+        'items' => [
+            $item1->getFullInfo(),
+            $item2->getFullInfo(),
+        ],
+        'totaux' => [
+            'items_count' => $commande->getItemsCount(),
+            'total_quantity' => $commande->getTotalQuantity(),
+            'calculated_total' => $commande->calculateTotal(),
+            'frais_livraison' => $commande->isDelivery() ? 15.00 : 0,
+        ],
     ]);
 }
 

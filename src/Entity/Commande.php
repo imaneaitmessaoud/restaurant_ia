@@ -5,8 +5,8 @@ namespace App\Entity;
 use App\Enum\StatutCommandeEnum;
 use App\Enum\TypeServiceEnum;
 use App\Repository\CommandeRepository;
-// use Doctrine\Common\Collections\ArrayCollection;
-// use Doctrine\Common\Collections\Collection;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 
@@ -52,12 +52,12 @@ class Commande
     private ?User $user = null;
 
     // TODO: Relation avec CommandeItem - À compléter par votre collègue
-    // #[ORM\OneToMany(mappedBy: 'commande', targetEntity: CommandeItem::class, cascade: ['persist', 'remove'])]
-    // private Collection $commandeItems;
+    #[ORM\OneToMany(mappedBy: 'commande', targetEntity: CommandeItem::class, cascade: ['persist', 'remove'])]
+    private Collection $commandeItems;
 
     public function __construct()
     {
-        // $this->commandeItems = new ArrayCollection();
+        $this->commandeItems = new ArrayCollection();
         $this->createdAt = new \DateTimeImmutable();
         $this->updatedAt = new \DateTimeImmutable();
         $this->statut = StatutCommandeEnum::CONFIRMEE;
@@ -219,4 +219,56 @@ class Commande
     {
         return sprintf('%s (%s)', $this->getReference(), $this->getFormattedTotal());
     }
+
+    public function getCommandeItems(): Collection
+    {
+        return $this->commandeItems;
+    }
+
+    public function addCommandeItem(CommandeItem $item): self
+    {
+        if (!$this->commandeItems->contains($item)) {
+            $this->commandeItems[] = $item;
+            $item->setCommande($this); // relation inverse
+        }
+
+        return $this;
+    }
+
+    public function removeCommandeItem(CommandeItem $item): self
+    {
+        if ($this->commandeItems->removeElement($item)) {
+            if ($item->getCommande() === $this) {
+                $item->setCommande(null);
+            }
+        }
+
+        return $this;
+    }
+    public function getItemsCount(): int
+    {
+        return count($this->commandeItems);
+    }
+
+    public function getTotalQuantity(): int
+    {
+        return array_sum(array_map(fn($item) => $item->getQuantite(), $this->commandeItems->toArray()));
+    }
+
+    public function calculateTotal(): float
+    {
+        return array_reduce($this->commandeItems->toArray(), fn($sum, $item) =>
+            $sum + $item->getSousTotal(), 0.0);
+    }
+
+    public function updateTotal(): void
+    {
+        $this->setTotal($this->calculateTotal());
+    }
+
+    public function isDelivery(): bool
+    {
+        return $this->typeService === TypeServiceEnum::LIVRAISON;
+    }
+
 }

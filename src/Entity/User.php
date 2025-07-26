@@ -50,6 +50,25 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\OneToMany(mappedBy: 'user', targetEntity: Conversation::class)]
     private Collection $conversations;
+    
+    //CustomerPreference
+    #[ORM\OneToOne(mappedBy: 'user', targetEntity: CustomerPreference::class, cascade: ['persist', 'remove'])]
+    private ?CustomerPreference $preference = null;
+
+    public function getPreference(): ?CustomerPreference
+    {
+        return $this->preference;
+    }
+
+    public function setPreference(CustomerPreference $preference): static
+    {
+        if ($preference->getUser() !== $this) {
+            $preference->setUser($this);
+        }
+
+        $this->preference = $preference;
+        return $this;
+    }
 
     public function __construct()
     {

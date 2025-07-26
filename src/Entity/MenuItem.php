@@ -2,6 +2,7 @@
 
 namespace App\Entity;
 
+use Doctrine\ORM\Mapping\EntityListeners;
 use App\Repository\MenuItemRepository;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
@@ -10,6 +11,10 @@ use Doctrine\ORM\Mapping as ORM;
 
 #[ORM\Entity(repositoryClass: MenuItemRepository::class)]
 #[ORM\Table(name: 'menu_items')]
+/**
+ * @ORM\Entity
+ * @ORM\EntityListeners({"App\EventListener\MenuItemListener"})
+ */
 class MenuItem
 {
     #[ORM\Id]

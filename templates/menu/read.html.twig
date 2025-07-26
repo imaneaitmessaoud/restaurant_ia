@@ -1,0 +1,10 @@
+<h2>Contenu du fichier Excel :</h2>
+<table border="1">
+    {% for row in data %}
+        <tr>
+            {% for cell in row %}
+                <td>{{ cell }}</td>
+            {% endfor %}
+        </tr>
+    {% endfor %}
+</table>

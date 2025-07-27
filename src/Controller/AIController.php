@@ -1,29 +1,43 @@
 <?php
+
 namespace App\Controller;
 
-use App\Service\OpenAIService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
-use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Annotation\Route;
-use App\Service\MockOpenAIService;
+use App\Repository\MenuItemRepository;
 
 class AIController extends AbstractController
 {
-    #[Route('/ask-ai', name: 'ask_ai')]
-    public function ask(MockOpenAIService $openAIService): Response
+    #[Route('/dialogflow/menu', name: 'dialogflow_menu', methods: ['POST'])]
+    public function menuFromDb(MenuItemRepository $menuItemRepository): JsonResponse
     {
-        $userQuestion = 'Donne-moi une idée de menu végétarien';
-        $aiResponse = $openAIService->askChatGPT($userQuestion);
-        return new Response($aiResponse);
+        error_log('Webhook /dialogflow/menu appelé');
+        $items = $menuItemRepository->findAll();
+
+        $menu = [];
+        foreach ($items as $item) {
+            $categorie = $item->getCategory();
+            $catName = $categorie ? $categorie->getNom() : 'Sans catégorie';
+
+            $nom = $item->getNom();
+            $prix = $item->getFormattedPrix(); // Formaté "XX.XX DH"
+
+            if (!$catName || !$nom || !$prix) continue;
+
+            $menu[$catName][] = [$nom, $prix];
+        }
+
+        $message = "📋 Voici notre menu :\n";
+        foreach ($menu as $cat => $plats) {
+            $message .= "\n🍽️ *$cat* :\n";
+            foreach ($plats as [$nom, $prix]) {
+                $message .= "- $nom - $prix\n";
+            }
+        }
+
+        return $this->json([
+            'fulfillmentText' => $message
+        ]);
     }
-    /*public function ask(OpenAIService $openAIService): Response
-    {
-        $userQuestion = 'Donne-moi une idée de menu végétarien';
-
-        $aiResponse = $openAIService->ask($userQuestion); // méthode correcte
-
-        return new Response($aiResponse);
-    }*/
-
-
 }

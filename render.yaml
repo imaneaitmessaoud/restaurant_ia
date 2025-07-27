@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: symfony-backend
+    env: php
+    plan: free
+    buildCommand: |
+      composer install --no-dev
+    startCommand: php -S 0.0.0.0:8000 -t public
+    envVars:
+      - key: APP_ENV
+        value: prod

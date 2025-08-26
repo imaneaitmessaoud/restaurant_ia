@@ -5,7 +5,7 @@ namespace App\Entity;
 use App\Enum\StatutCommandeEnum;
 use App\Enum\TypeServiceEnum;
 use App\Repository\CommandeRepository;
-use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\ArrayCollection; 
 use Doctrine\Common\Collections\Collection;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
@@ -62,7 +62,9 @@ class Commande
         $this->updatedAt = new \DateTimeImmutable();
         $this->statut = StatutCommandeEnum::CONFIRMEE;
         $this->typeService = TypeServiceEnum::SUR_PLACE;
+        $this->createdAt = new \DateTimeImmutable();
     }
+    
 
     // Getters et Setters de base...
     public function getId(): ?int

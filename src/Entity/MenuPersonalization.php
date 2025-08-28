@@ -208,19 +208,29 @@ class MenuPersonalization
     }
 
     public function getInputType(): string
-    {
-        return $this->type->getLabel();
-    }
+{
+    // Choix raisonnables par défaut ; ajuste au besoin :
+    return match ($this->type) {
+        \App\Enum\PersonalizationTypeEnum::TAILLE   => 'select',  // small/medium/large
+        \App\Enum\PersonalizationTypeEnum::CUISSON => 'radio',   // saignante / à point / bien cuite
+        \App\Enum\PersonalizationTypeEnum::FROMAGE => 'number',  // "extra fromage x2" (quantité)
+        \App\Enum\PersonalizationTypeEnum::SUCRE   => 'select',  // 0%, 50%, 100%
+        \App\Enum\PersonalizationTypeEnum::GLACE   => 'checkbox',// “avec glaçons”
+        \App\Enum\PersonalizationTypeEnum::PATE    => 'select',  // fine / épaisse
+        default                                     => 'select',
+    };
+}
 
-    public function isMultipleChoice(): bool
-    {
-        return $this->getInputType() === 'checkbox';
-    }
+public function isMultipleChoice(): bool
+{
+    return $this->getInputType() === 'checkbox';
+}
 
-    public function isSingleChoice(): bool
-    {
-        return in_array($this->getInputType(), ['radio', 'select']);
-    }
+public function isSingleChoice(): bool
+{
+    return in_array($this->getInputType(), ['radio','select'], true);
+}
+
 
     public function validateChoice(mixed $choice): bool
     {
@@ -285,4 +295,11 @@ class MenuPersonalization
     {
         return sprintf('%s (%s)', $this->getDisplayName(), $this->menuItem?->getNom() ?? 'Sans article');
     }
+    // ... dans class MenuPersonalization
+public function getLabel(): string
+{
+    // Le “label” lisible vient du type (enum)
+    return $this->type->getLabel();
+}
+
 }

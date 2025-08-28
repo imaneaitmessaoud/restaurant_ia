@@ -81,4 +81,9 @@ class MenuProvider
         $s = trim(preg_replace('~\s+~',' ', $s));
         return $s;
     }
+    public function getChecksum(): ?string
+  {
+    return is_file($this->excelPath) ? hash_file('sha256', $this->excelPath) : null;
+  }
+
 }

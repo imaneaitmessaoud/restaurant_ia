@@ -34,4 +34,17 @@ class ConversationStore
     {
         $this->cache->delete($this->key($from));
     }
+    private function seenKey(string $sid): string { return 'seen_'.$sid; }
+
+ public function seen(string $sid): bool
+ {
+    return (bool)$this->cache->get($this->seenKey($sid), fn() => false);
+ }
+
+ public function markSeen(string $sid): void
+ {
+    $this->cache->delete($this->seenKey($sid));
+    $this->cache->get($this->seenKey($sid), fn() => true);
+ }
+
 }

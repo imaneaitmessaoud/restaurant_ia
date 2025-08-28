@@ -25,3 +25,5 @@ services:
   App\Service\InfoProvider:
     arguments:
       $projectDir: '%kernel.project_dir%'
+  
+  App\Service\PersonalizationService: ~

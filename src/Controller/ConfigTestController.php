@@ -58,7 +58,7 @@ public function horaires(InfoProvider $info): Response
         return $this->json($this->info->getPromos());
     }
 
-    #[Route('/config/test/livraison', name: 'config_test_livraison', methods: ['GET'])]
+    #[Route('/config/test/servicelivraison', name: 'config_test_livraison', methods: ['GET'])]
     public function livraison(): JsonResponse
     {
         return $this->json($this->info->getLivraison());

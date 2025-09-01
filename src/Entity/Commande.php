@@ -55,6 +55,9 @@ class Commande
     #[ORM\OneToMany(mappedBy: 'commande', targetEntity: CommandeItem::class, cascade: ['persist', 'remove'])]
     private Collection $commandeItems;
 
+    #[ORM\Column(name: 'lu_cuisine', type: 'boolean', options: ['default' => false])]
+    private bool $luCuisine = false;
+
     public function __construct()
     {
         $this->commandeItems = new ArrayCollection();
@@ -271,6 +274,19 @@ class Commande
     public function isDelivery(): bool
     {
         return $this->typeService === TypeServiceEnum::LIVRAISON;
+    }
+
+
+    public function isLuCuisine(): bool
+    {
+        return $this->luCuisine;
+    }
+
+    public function setLuCuisine(bool $luCuisine): self
+    {
+        $this->luCuisine = $luCuisine;
+        $this->updatedAt = new \DateTimeImmutable();
+        return $this;
     }
 
 }

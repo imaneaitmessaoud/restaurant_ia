@@ -10,6 +10,7 @@ enum PersonalizationTypeEnum: string
     case PATE = 'pate';
     case FROMAGE = 'fromage';
     case CUISSON = 'cuisson';
+    case SUPPLEMENT = 'supplement'; // <-- AJOUT
 
     public function getLabel(): string
     {
@@ -20,6 +21,8 @@ enum PersonalizationTypeEnum: string
             self::PATE => 'Pâte',
             self::FROMAGE => 'Fromage',
             self::CUISSON => 'Cuisson',
+            self::SUPPLEMENT=> 'Supplément', // <-- AJOUT
+
         };
     }
 }

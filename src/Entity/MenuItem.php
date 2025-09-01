@@ -15,6 +15,12 @@ use Doctrine\ORM\Mapping as ORM;
  * @ORM\Entity
  * @ORM\EntityListeners({"App\EventListener\MenuItemListener"})
  */
+#[ApiResource(
+    operations: [
+        new GetCollection(), // <-- ajoute ça
+        // ... tes autres opérations
+    ],
+)]
 class MenuItem
 {
     #[ORM\Id]

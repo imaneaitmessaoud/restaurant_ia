@@ -1,13 +1,12 @@
+# config/packages/nelmio_cors.yaml
 nelmio_cors:
-    defaults:
-        allow_origin: ['http://127.0.0.1:8081']
-        allow_methods: ['GET', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE']
-        allow_headers: ['Content-Type', 'Authorization']
-        max_age: 3600
-    paths:
-        '^/api/':
-            allow_origin: ['http://127.0.0.1:8081']
-            allow_methods: ['GET','POST','PUT','DELETE','OPTIONS']
-            allow_headers: ['Content-Type', 'Authorization']
-
-
+  defaults:
+    allow_credentials: true
+    allow_origin: ['http://127.0.0.1:8081', 'http://localhost:8081']
+    allow_headers: ['Content-Type', 'Authorization', 'X-Requested-With']
+    expose_headers: []
+    allow_methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+    max_age: 3600
+  paths:
+    '^/':
+      allow_origin: ['http://127.0.0.1:8081', 'http://localhost:8081']

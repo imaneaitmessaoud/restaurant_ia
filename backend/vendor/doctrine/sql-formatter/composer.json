@@ -1,0 +1,41 @@
+{
+    "name": "doctrine/sql-formatter",
+    "description": "a PHP SQL highlighting library",
+    "homepage": "https://github.com/doctrine/sql-formatter/",
+    "keywords": ["sql", "highlight"],
+    "license": "MIT",
+    "type": "library",
+    "require": {
+        "php": "^7.2 || ^8.0"
+    },
+    "require-dev": {
+        "doctrine/coding-standard": "^9.0",
+        "phpstan/phpstan": "^1.0",
+        "phpunit/phpunit": "^8.5 || ^9.6",
+        "vimeo/psalm": "^4.11"
+    },
+    "authors": [
+        {
+            "name": "Jeremy Dorn",
+            "email": "jeremy@jeremydorn.com",
+            "homepage": "https://jeremydorn.com/"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Doctrine\\SqlFormatter\\": "src"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Doctrine\\SqlFormatter\\Tests\\": "tests"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    },
+    "bin": ["bin/sql-formatter"]
+}

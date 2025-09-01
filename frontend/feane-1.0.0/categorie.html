@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <!-- Basic -->
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <!-- Mobile Metas -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <!-- Site Metas -->
+  <meta name="keywords" content="" />
+  <meta name="description" content="" />
+  <meta name="author" content="" />
+  <link rel="shortcut icon" href="images/favicon.png" type="">
+
+    <title> Our Restaurant </title>
+
+
+  <!-- bootstrap core css -->
+  <link rel="stylesheet" type="text/css" href="css/bootstrap.css" />
+
+  <!--owl slider stylesheet -->
+  <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/assets/owl.carousel.min.css" />
+  <!-- nice select  -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery-nice-select/1.1.0/css/nice-select.min.css" integrity="sha512-CruCP+TD3yXzlvvijET8wV5WxxEh5H8P4cmz0RFbKK6FlZ2sYl3AEsKlLPHbniXKSrDdFewhbmBK5skbdsASbQ==" crossorigin="anonymous" />
+  <!-- font awesome style -->
+  <link href="css/font-awesome.min.css" rel="stylesheet" />
+
+  <!-- Custom styles for this template -->
+  <link href="css/style.css" rel="stylesheet" />
+  <!-- responsive style -->
+  <link href="css/responsive.css" rel="stylesheet" />
+
+</head>
+
+<body class="sub_page">
+
+  <div class="hero_area">
+    <div class="bg-box">
+      <img src="images/hero-bg.jpg" alt="">
+    </div>
+    <!-- header section strats -->
+    <header class="header_section">
+      <div class="container">
+        <nav class="navbar navbar-expand-lg custom_nav-container ">
+          <a class="navbar-brand" href="index.html">
+            <span>
+                             K&I Restaurant
+
+            </span>
+          </a>
+
+          <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+            <span class=""> </span>
+          </button>
+
+          <div class="collapse navbar-collapse" id="navbarSupportedContent">
+            <ul class="navbar-nav  mx-auto ">
+              <li class="nav-item">
+                <a class="nav-link" href="indexadmin.html">Home </a>
+              </li>
+              <li class="nav-item active">
+                <a class="nav-link" href="categorie.html">Category</a>
+              </li>
+              <li class="nav-item ">
+                <a class="nav-link" href="admin_menu.html">Item</a>
+              </li>
+            
+              <li class="nav-item ">
+                <a class="nav-link" href="command.html">Command</a>
+              </li>
+              <li class="nav-item">
+            <a class="nav-link  font-weight-bold" href="signin.html">Exit</a>
+          </li>
+            </ul>
+
+          </div>
+        </nav>
+      </div>
+    </header>
+    <!-- end header section -->
+  </div>
+
+
+
+
+<!-- category section -->
+<section class="category_section layout_padding">
+  <div class="container">
+    <div class="heading_container heading_center">
+      <h2>Our Categories</h2>
+    </div>
+
+    <!-- Alert -->
+    <div id="alertBox" class="alert d-none" role="alert"></div>
+
+    <!-- Search -->
+    <div class="mb-3">
+      <input type="text" id="searchInput" class="form-control" placeholder="Rechercher une catégorie...">
+    </div>
+
+    <!-- Add Form -->
+    <form id="addCategoryForm" class="mb-4">
+      <div class="form-row">
+        <div class="col-12 col-md">
+          <input type="text" class="form-control" name="nom" placeholder="Nom de catégorie" required>
+        </div>
+        <div class="col-12 col-md">
+          <input type="text" class="form-control" name="description" placeholder="Description">
+        </div>
+        <div class="col-6 col-md-2">
+          <input type="number" class="form-control" name="ordre" placeholder="Ordre" value="1" min="1">
+        </div>
+        <div class="col-12 col-md">
+          <!-- NOTE: currently URL text; if you later move to file upload, tell me and I’ll switch to multipart -->
+          <input type="text" class="form-control" name="image" placeholder="URL Image (optionnel)">
+        </div>
+        <div class="col-6 col-md-2">
+          <button type="submit" class="btn btn-success btn-block">Ajouter</button>
+        </div>
+      </div>
+    </form>
+
+    <!-- Table -->
+    <div class="table-responsive">
+      <table class="table table-bordered table-striped mb-0">
+        <thead class="thead-dark">
+          <tr>
+            <th>Nom</th>
+            <th>Description</th>
+            <th style="width:100px;">Ordre</th>
+            <th>Image</th>
+            <th style="width:80px;">Actif</th>
+            <th style="width:180px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="categoryTable"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+<!-- end category section -->
+
+<script>
+  // Backend URL: if you serve from Symfony dev server (port 8000), relative path works; otherwise use absolute
+  const API_URL = (location.port === '8000')
+    ? '/api/categories'
+    : 'http://127.0.0.1:8000/api/categories';
+
+  // Alert helper
+  const alertBox = document.getElementById('alertBox');
+  function showAlert(msg, type = 'success') {
+    alertBox.className = 'alert alert-' + type;
+    alertBox.textContent = msg;
+    alertBox.classList.remove('d-none');
+    alertBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    setTimeout(() => alertBox.classList.add('d-none'), 2500);
+  }
+
+  // Escape HTML for safe injection
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, m => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[m]));
+  }
+
+  // Load + render table (inputs for inline editing kept; you can remove later if you fully switch to form-only edits)
+  async function loadCategories() {
+    try {
+      const res = await fetch(API_URL);
+      const data = await res.json();
+
+      const tbody = document.getElementById('categoryTable');
+      tbody.innerHTML = data.map(cat => `
+        <tr data-id="${cat.id}">
+          <td><input type="text" class="form-control nom" value="${escapeHtml(cat.nom)}"></td>
+          <td><input type="text" class="form-control description" value="${escapeHtml(cat.description)}"></td>
+          <td><input type="number" class="form-control ordre" value="${cat.ordre ?? 1}" min="1"></td>
+          <td class="text-center">
+            ${cat.image ? `<img src="images/${escapeHtml(cat.image)}" alt="${escapeHtml(cat.nom)}" style="width:50px;height:50px;object-fit:cover;border-radius:4px;">` : ''}
+          </td>
+          <td class="text-center"><input type="checkbox" class="actif" ${cat.actif ? 'checked' : ''}></td>
+          <td>
+            <button class="btn btn-primary btn-sm update">Update</button>
+            <button class="btn btn-danger btn-sm delete">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+    } catch (e) {
+      console.error(e);
+      showAlert("Erreur de chargement. Vérifie que le backend tourne sur 127.0.0.1:8000", 'danger');
+    }
+  }
+
+  // Global search (match input values, not innerText)
+  document.getElementById('searchInput').addEventListener('keyup', (e) => {
+    const value = e.target.value.toLowerCase();
+    document.querySelectorAll('#categoryTable tr').forEach(tr => {
+      const name = (tr.querySelector('.nom')?.value || '').toLowerCase();
+      const desc = (tr.querySelector('.description')?.value || '').toLowerCase();
+      tr.style.display = (name.includes(value) || desc.includes(value)) ? '' : 'none';
+    });
+  });
+
+  // Add
+  document.getElementById('addCategoryForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const payload = {
+      nom: f.nom.value.trim(),
+      description: f.description.value.trim() || null,
+      ordre: Number(f.ordre.value || 1),
+      image: f.image.value.trim() || null,
+      actif: true
+    };
+
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de l’ajout');
+
+      showAlert('✅ Catégorie ajoutée', 'success');
+      f.reset();
+      f.ordre.value = 1;
+      await loadCategories();
+    } catch (e2) {
+      console.error(e2);
+      showAlert(e2.message, 'danger');
+    }
+  });
+
+  // Update / Delete (event delegation)
+  document.addEventListener('click', async (e) => {
+    const row = e.target.closest('tr[data-id]');
+    if (!row) return;
+    const id = row.getAttribute('data-id');
+
+    // UPDATE
+    if (e.target.classList.contains('update')) {
+      // get image filename currently shown in the 4th column (if any)
+      const imgEl = row.querySelector('td:nth-child(4) img');
+      const imageFromImg = imgEl ? imgEl.getAttribute('src') : null;
+      const image = imageFromImg ? imageFromImg.split('/').pop() : null; // keep only filename (e.g., pizza.jpg)
+
+      const payload = {
+        nom: row.querySelector('.nom').value.trim(),
+        description: row.querySelector('.description').value.trim(),
+        ordre: Number(row.querySelector('.ordre').value || 1),
+        image, // filename or null
+        actif: row.querySelector('.actif').checked
+      };
+
+      try {
+        const res = await fetch(`${API_URL}/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Erreur lors de la mise à jour');
+
+        showAlert('✏️ Catégorie mise à jour', 'info');
+        await loadCategories();
+      } catch (err) {
+        console.error(err);
+        showAlert(err.message, 'danger');
+      }
+    }
+
+    // DELETE
+    if (e.target.classList.contains('delete')) {
+      if (!confirm('Supprimer cette catégorie ?')) return;
+      try {
+        const res = await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Erreur lors de la suppression');
+
+        showAlert('🗑️ Catégorie supprimée', 'danger');
+        await loadCategories();
+      } catch (err) {
+        console.error(err);
+        showAlert(err.message, 'danger');
+      }
+    }
+  });
+
+  // Init
+  loadCategories();
+</script>
+
+
+
+
+
+
+  <!-- footer section -->
+  <footer class="footer_section">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-4 footer-col">
+          <div class="footer_contact">
+            <h4>
+              Contact Us
+            </h4>
+            <div class="contact_link_box">
+              <a href="">
+                <i class="fa fa-phone" aria-hidden="true"></i>
+                <span>
+                  Call +14155238886
+                </span>
+              </a>
+              <a href="">
+                <i class="fa fa-envelope" aria-hidden="true"></i>
+                <span>
+                  K&IRestaurant@gmail.com
+                </span>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <div class="footer_detail">
+            <a href="" class="footer-logo">
+              K&I Restaurant
+            </a>
+            <p>
+              Delivering delicious food with love and passion. Our goal is to give you the best dining experience.
+            </p>
+
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <h4>
+            Opening Hours
+          </h4>
+          <p>
+            Lundi-Jeudi: 08:00-23:00
+          </p>
+          <p>
+            Vendredi: 12:00-23:00 (Couscous spécial)
+          </p>
+          <p>
+            Samedi: 08:00-00:00 (Service continu )
+          </p>
+          <p>
+            Dimanche: 12:00-22:00
+          </p>  
+        </div>
+      </div>
+      <div class="footer-info">
+        <p>
+          &copy; <span id="displayYear"></span> All Rights Reserved By
+          <a href="https://html.design/">K&I Restaurant</a><br><br>
+          &copy; <span id="displayYear"></span> Distributed By
+          <a href="https://themewagon.com/" target="_blank">Kaoutar & Imane</a>
+        </p>
+      </div>
+    </div>
+  </footer>
+  <!-- footer section -->
+
+  <!-- jQery -->
+  <script src="js/jquery-3.4.1.min.js"></script>
+  <!-- popper js -->
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js" integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo" crossorigin="anonymous">
+  </script>
+  <!-- bootstrap js -->
+  <script src="js/bootstrap.js"></script>
+  <!-- owl slider -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/owl.carousel.min.js">
+  </script>
+  <!-- isotope js -->
+  <script src="https://unpkg.com/isotope-layout@3.0.4/dist/isotope.pkgd.min.js"></script>
+  <!-- nice select -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-nice-select/1.1.0/js/jquery.nice-select.min.js"></script>
+  <!-- custom js -->
+  <script src="js/custom.js"></script>
+  <!-- Google Map -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCh39n5U-4IoWpsVGUHWdqB6puEkhRLdmI&callback=myMap">
+  </script>
+  <!-- End Google Map -->
+
+</body>
+
+</html>

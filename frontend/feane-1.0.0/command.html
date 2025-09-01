@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <!-- Basic -->
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <!-- Mobile Metas -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <!-- Site Metas -->
+  <meta name="keywords" content="" />
+  <meta name="description" content="" />
+  <meta name="author" content="" />
+  <link rel="shortcut icon" href="images/favicon.png" type="">
+
+  <title> Our Restaurant </title>
+
+  <!-- bootstrap core css -->
+  <link rel="stylesheet" type="text/css" href="css/bootstrap.css" />
+
+  <!--owl slider stylesheet -->
+  <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/assets/owl.carousel.min.css" />
+  <!-- nice select  -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery-nice-select/1.1.0/css/nice-select.min.css" integrity="sha512-CruCP+TD3yXzlvvijET8wV5WxxEh5H8P4cmz0RFbKK6FlZ2sYl3AEsKlLPHbniXKSrDdFewhbmBK5skbdsASbQ==" crossorigin="anonymous" />
+  <!-- font awesome style -->
+  <link href="css/font-awesome.min.css" rel="stylesheet" />
+
+  <!-- Custom styles for this template -->
+  <link href="css/style.css" rel="stylesheet" />
+  <!-- responsive style -->
+  <link href="css/responsive.css" rel="stylesheet" />
+
+</head>
+
+<body class="sub_page">
+
+  <div class="hero_area">
+    <div class="bg-box">
+      <img src="images/hero-bg.jpg" alt="">
+    </div>
+    <!-- header section strats -->
+    <header class="header_section">
+      <div class="container">
+        <nav class="navbar navbar-expand-lg custom_nav-container ">
+          <a class="navbar-brand" href="index.html">
+            <span>
+              K&I Restaurant
+            </span>
+          </a>
+
+          <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+            <span class=""> </span>
+          </button>
+
+          <div class="collapse navbar-collapse" id="navbarSupportedContent">
+            <ul class="navbar-nav  mx-auto ">
+              <li class="nav-item">
+                <a class="nav-link" href="indexadmin.html">Home </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="categorie.html">Category</a>
+              </li>
+              <li class="nav-item ">
+                <a class="nav-link" href="admin_menu.html">Item</a>
+              </li>
+              
+              <li class="nav-item active">
+                <a class="nav-link" href="command.html">Command</a>
+              </li>
+              <li class="nav-item">
+            <a class="nav-link  font-weight-bold" href="signin.html">Exit</a>
+          </li>
+            </ul>
+
+          </div>
+        </nav>
+      </div>
+    </header>
+    <!-- end header section -->
+  </div>
+
+  <!-- command section -->
+
+  <!-- command section -->
+<section class="command_section layout_padding">
+  <div class="container">
+    <div class="heading_container heading_center">
+      <h2>Commandes en attente (Cuisine)</h2>
+    </div>
+
+    <!-- Alert -->
+    <div id="cmdAlert" class="alert d-none mt-3" role="alert"></div>
+
+    <!-- Controls -->
+    <div class="d-flex align-items-center justify-content-between my-3">
+      <div>
+        <button id="refreshBtn" class="btn btn-outline-primary btn-sm">Rafraîchir</button>
+      </div>
+      <div class="text-muted small">
+        <span id="lastUpdated">—</span>
+      </div>
+    </div>
+
+    <!-- Cards grid -->
+    <div id="ordersGrid" class="row"></div>
+
+    <!-- Empty state -->
+    <div id="emptyState" class="text-center text-muted my-5 d-none">
+      Aucune commande en attente 👨‍🍳
+    </div>
+  </div>
+</section>
+<!-- end command section -->
+
+<script>
+  // ===== CONFIG =====
+  const API_CMD_BASE = (location.port === '8000')
+    ? '/api/commandes'
+    : 'http://127.0.0.1:8000/api/commandes';
+
+  // ===== HELPERS =====
+  const cmdAlert = document.getElementById('cmdAlert');
+  const grid = document.getElementById('ordersGrid');
+  const emptyState = document.getElementById('emptyState');
+  const lastUpdated = document.getElementById('lastUpdated');
+
+  function showCmdAlert(msg, type = 'success') {
+    cmdAlert.className = 'alert alert-' + type;
+    cmdAlert.textContent = msg;
+    cmdAlert.classList.remove('d-none');
+    setTimeout(() => cmdAlert.classList.add('d-none'), 2500);
+  }
+  function fmtDate(d) {
+    try { return new Date(d).toLocaleString('fr-FR'); } catch { return d || ''; }
+  }
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+  function labelTypeService(v) {
+    switch ((v || '').toLowerCase()) {
+      case 'sur_place': return 'Sur place';
+      case 'emporter': return 'À emporter';
+      case 'livraison': return 'Livraison';
+      default: return v || '—';
+    }
+  }
+  function renderPersonalizations(pjson) {
+    if (!pjson || typeof pjson !== 'object') return '';
+    const rows = [];
+    for (const [k, v] of Object.entries(pjson)) {
+      let val;
+      if (Array.isArray(v)) val = v.join(', ');
+      else if (v && typeof v === 'object') val = JSON.stringify(v);
+      else val = String(v);
+      rows.push(`<div class="small text-muted"><span class="text-secondary">${escapeHtml(k)}:</span> ${escapeHtml(val)}</div>`);
+    }
+    return rows.join('');
+  }
+  function renderItem(it) {
+    const name = it.menu_item_name || ('Item #' + (it.menu_item_id ?? ''));
+    const pers = renderPersonalizations(it.personalisation_json || it.personalisation || {});
+    const comment = it.commentaire ? `<div class="small"><strong>Note item:</strong> ${escapeHtml(it.commentaire)}</div>` : '';
+    return `
+      <li class="mb-2">
+        <div><strong>${it.quantite}× ${escapeHtml(name)}</strong></div>
+        ${pers ? `<div>${pers}</div>` : ''}
+        ${comment}
+      </li>
+    `;
+  }
+  function orderCardTemplate(c) {
+    const items = Array.isArray(c.items) ? c.items.map(renderItem).join('') : '';
+    const globalNote = c.commentaire ? `<div class="mt-2"><strong>Note commande:</strong> ${escapeHtml(c.commentaire)}</div>` : '';
+    const addr = (c.type_service && c.type_service.toLowerCase() === 'livraison' && c.adresse_livraison)
+      ? `<div class="mt-1"><strong>Adresse:</strong> ${escapeHtml(c.adresse_livraison)}</div>` : '';
+
+    return `
+      <div class="col-12 col-md-6 col-lg-4 mb-3" data-id="${c.id}">
+        <div class="card h-100 shadow-sm">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <div>
+              <strong>Commande #${c.id}</strong>
+              ${c.created_at ? `<div class="small text-muted">${fmtDate(c.created_at)}</div>` : ''}
+            </div>
+            <span class="badge badge-info">${labelTypeService(c.type_service)}</span>
+          </div>
+          <div class="card-body">
+            <ul class="list-unstyled mb-0">
+              ${items || '<li class="text-muted">Aucun item</li>'}
+            </ul>
+            ${globalNote}
+            ${addr}
+          </div>
+          <div class="card-footer d-flex justify-content-between">
+            <button class="btn btn-success btn-sm mark-read">Marquer comme lu</button>
+            <button class="btn btn-outline-secondary btn-sm keep">Garder</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  function renderOrders(list) {
+    grid.innerHTML = list.map(orderCardTemplate).join('');
+    if (!list.length) emptyState.classList.remove('d-none');
+    else emptyState.classList.add('d-none');
+    lastUpdated.textContent = 'Dernière mise à jour : ' + new Date().toLocaleTimeString('fr-FR');
+  }
+
+  // ===== DATA =====
+  async function fetchUnreadOrders() {
+    const url = `${API_CMD_BASE}?only_unread=1`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Fetch commandes échoué (HTTP ${res.status})`);
+    return res.json();
+  }
+  async function markOrderRead(id) {
+    const res = await fetch(`${API_CMD_BASE}/${id}/lu`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}' // certains serveurs refusent PATCH sans body
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${res.status} ${res.statusText}`);
+    }
+  }
+
+  // ===== CONTROLLERS =====
+  async function loadBoard() {
+    try {
+      const list = await fetchUnreadOrders();
+      // console.log('commandes reçues', list);
+      renderOrders(list);
+    } catch (e) {
+      console.error(e);
+      showCmdAlert(e.message || "Erreur lors du chargement des commandes", "danger");
+    }
+  }
+
+  // Délégation de clics
+  document.addEventListener('click', async (e) => {
+    const cardCol = e.target.closest('[data-id]');
+    if (!cardCol) return;
+    const id = cardCol.getAttribute('data-id');
+
+    // Marquer comme lu
+    if (e.target.classList.contains('mark-read')) {
+      const btn = e.target;
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        await markOrderRead(id);
+        // Retirer la carte du DOM
+        cardCol.remove();
+        // Si plus aucune commande, afficher l'état vide
+        if (!grid.querySelector('[data-id]')) emptyState.classList.remove('d-none');
+        showCmdAlert('Commande marquée comme lue ✅', 'success');
+      } catch (err) {
+        console.error(err);
+        btn.disabled = false;
+        btn.textContent = 'Marquer comme lu';
+        showCmdAlert(err.message || 'Échec lors du marquage', 'danger');
+      }
+    }
+
+    // Garder (feedback simple)
+    if (e.target.classList.contains('keep')) {
+      showCmdAlert('Commande conservée.', 'info');
+    }
+  });
+
+  // Bouton rafraîchir
+  document.getElementById('refreshBtn').addEventListener('click', loadBoard);
+
+  // ===== INIT + polling optionnel =====
+  document.addEventListener('DOMContentLoaded', () => {
+    loadBoard();
+    // refresh auto toutes les 20s si tu veux
+    setInterval(loadBoard, 20000);
+  });
+</script>
+
+
+
+  <!-- end command section -->
+
+  <!-- footer section -->
+  <footer class="footer_section">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-4 footer-col">
+          <div class="footer_contact">
+            <h4>
+              Contact Us
+            </h4>
+            <div class="contact_link_box">
+              <a href="">
+                <i class="fa fa-phone" aria-hidden="true"></i>
+                <span>
+                  Call +14155238886
+                </span>
+              </a>
+              <a href="">
+                <i class="fa fa-envelope" aria-hidden="true"></i>
+                <span>
+                  K&IRestaurant@gmail.com
+                </span>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <div class="footer_detail">
+            <a href="" class="footer-logo">
+              K&I Restaurant
+            </a>
+            <p>
+              Delivering delicious food with love and passion. Our goal is to give you the best dining experience.
+            </p>
+
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <h4>
+            Opening Hours
+          </h4>
+          <p>
+            Lundi-Jeudi: 08:00-23:00
+          </p>
+          <p>
+            Vendredi: 12:00-23:00 (Couscous spécial)
+          </p>
+          <p>
+            Samedi: 08:00-00:00 (Service continu )
+          </p>
+          <p>
+            Dimanche: 12:00-22:00
+          </p>  
+        </div>
+      </div>
+      <div class="footer-info">
+        <p>
+          &copy; <span id="displayYear"></span> All Rights Reserved By
+          <a href="https://html.design/">K&I Restaurant</a><br><br>
+          &copy; <span id="displayYear"></span> Distributed By
+          <a href="https://themewagon.com/" target="_blank">Kaoutar & Imane</a>
+        </p>
+      </div>
+    </div>
+  </footer>
+  <!-- footer section -->
+
+  <!-- jQery -->
+  <script src="js/jquery-3.4.1.min.js"></script>
+  <!-- popper js -->
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js" integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo" crossorigin="anonymous">
+  </script>
+  <!-- bootstrap js -->
+  <script src="js/bootstrap.js"></script>
+  <!-- owl slider -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/owl.carousel.min.js">
+  </script>
+  <!-- isotope js -->
+  <script src="https://unpkg.com/isotope-layout@3.0.4/dist/isotope.pkgd.min.js"></script>
+  <!-- nice select -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-nice-select/1.1.0/js/jquery.nice-select.min.js"></script>
+  <!-- custom js -->
+  <script src="js/custom.js"></script>
+  <!-- Google Map -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCh39n5U-4IoWpsVGUHWdqB6puEkhRLdmI&callback=myMap">
+  </script>
+  <!-- End Google Map -->
+
+</body>
+
+</html>

@@ -1,0 +1,12 @@
+{
+    "require": {
+        "api-platform/core": "^2.7",
+        "doctrine/orm": "^2.20",
+        "doctrine/doctrine-bundle": "^2.13",
+        "nelmio/cors-bundle": "^2.5"
+    },
+    "require-dev": {
+        "symfony/maker-bundle": "^1.50",
+        "doctrine/doctrine-fixtures-bundle": "^3.7"
+    }
+}

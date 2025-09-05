@@ -18,12 +18,23 @@ services:
     arguments:
       $projectDir: '%kernel.project_dir%'
 
-  App\Service\MenuProvider:
-    arguments:
-      $projectDir: '%kernel.project_dir%'
+  
 
   App\Service\InfoProvider:
     arguments:
       $projectDir: '%kernel.project_dir%'
   
   App\Service\PersonalizationService: ~
+
+# === Agent Groq ===
+  App\Service\GroqOrderAgent:
+    arguments:
+      $http: '@http_client'
+      $apiKey: '%env(GROQ_API_KEY)%'
+      $model: '%env(GROQ_MODEL)%'
+
+  App\Service\OrderPayloadGuard: ~
+  App\Service\AiOrderMapper: ~
+
+  App\Service\MenuProvider: ~
+

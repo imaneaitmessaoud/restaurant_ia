@@ -1,15 +1,8 @@
 <?php
 namespace App\Controller;
 
-use App\Entity\Commande;
-use App\Entity\CommandeItem;
-use App\Entity\User;
-use App\Entity\MenuItem;
-use App\Enum\StatutCommandeEnum;
-use App\Enum\TypeServiceEnum;
 use App\Service\MenuProvider;
 use App\Service\ConversationStore;
-use App\Service\RecommendationService;
 use App\Service\InfoProvider;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -18,22 +11,30 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
 use App\Service\PersonalizationService;
 
+// IA (Groq)
+use App\Service\GroqOrderAgent;
+use App\Service\OrderPayloadGuard;
+use App\Service\AiOrderMapper;
+
+use Psr\Log\LoggerInterface;
+
 class WhatsappOrderController extends AbstractController
 {
     public function __construct(
-    private MenuProvider $menu,
-    private ConversationStore $store,
-    private RecommendationService $reco,
-    private EntityManagerInterface $em,
-    private InfoProvider $info,
-    private PersonalizationService $perso // ⬅️ AJOUT
-) {}
-
+        private MenuProvider $menu,
+        private ConversationStore $store,
+        private EntityManagerInterface $em,
+        private InfoProvider $info,
+        private PersonalizationService $perso,
+        private GroqOrderAgent $groq,
+        private OrderPayloadGuard $guard,
+        private AiOrderMapper $mapper
+    ) {}
 
     #[Route('/webhook/whatsapp', name: 'whatsapp_order', methods: ['POST'])]
-    public function webhook(Request $request): Response
+    public function webhook(Request $request, LoggerInterface $logger): Response
     {
-        // --- Vérif Twilio (désactivée si TWILIO_VERIFY=false) ---
+        // --- Vérif Twilio (optionnelle)
         $verify    = ($_ENV['TWILIO_VERIFY'] ?? 'false') === 'true';
         $authToken = $_ENV['TWILIO_AUTH_TOKEN'] ?? '';
         if ($verify) {
@@ -41,421 +42,341 @@ class WhatsappOrderController extends AbstractController
             if (!$this->isTwilioRequest($request, $authToken)) return $this->twiml('Unauthorized', 403);
         }
 
-        $from  = (string) $request->request->get('From', 'unknown'); // "whatsapp:+2126..."
+        $from  = (string)$request->request->get('From', 'unknown'); // ex: "whatsapp:+2126..."
         $body  = trim((string)$request->request->get('Body', ''));
         $lower = mb_strtolower($body);
 
-        // État de conv
-        $state = $this->store->get($from);
+        $logger->info('[WHATSAPP] hit', ['from'=>$from,'body'=>$body,'t'=>date('c')]);
 
-        // Idempotence (optionnelle) si ConversationStore propose seen/markSeen
-        $sid = (string) $request->request->get('MessageSid', '');
+        // Rien à traiter (ni texte ni média)
+        $numMedia = (int)$request->request->get('NumMedia', 0);
+        if ($body === '' && $numMedia === 0) {
+            return $this->twiml($this->brandHeader()."Écris par ex : *Pizza Margherita x2* ou *menu*.");
+        }
+
+        // Idempotence douce
+        $sid = (string)$request->request->get('MessageSid', '');
         if ($sid && method_exists($this->store,'seen') && method_exists($this->store,'markSeen')) {
-            if ($this->store->seen($sid)) return $this->twiml("OK");
+            if ($this->store->seen($sid)) return $this->twiml($this->brandHeader()."(reçu)");
             $this->store->markSeen($sid);
         }
 
-        // Préfixe si le fichier Menu Excel a changé
-        $prefix = $this->maybeMenuUpdatedPrefix($state, $this->menu, $from);
-
-        // --- Salutations naturelles ---
-        if (preg_match('~^(salut|salam|bonjour|bonsoir|hey|coucou)\b~i', $lower)) {
-            $intro  = $this->info->intro();
-            $prompt = "Souhaitez-vous voir *le menu*, connaître *les horaires*, *les promos*, ou *commencer une commande* ?";
-            return $this->twiml($prefix.$intro."\n\n".$prompt);
-        }
-        // --- Type de service ---
-        if (($state['step'] ?? null) === 'await_service') {
-            if (preg_match('~sur\s*place~i', $lower)) {
-                $state['type_service'] = 'sur_place';
-            } elseif (preg_match('~emporter|à emporter|a emporter~i', $lower)) {
-                $state['type_service'] = 'emporter';
-            } elseif (preg_match('~livrai?s?on|livra?son|livrer~i', $lower)) {
-                $state['type_service'] = 'livraison';
-            } else {
-                return $this->twiml("Merci de préciser : *sur place*, *emporter* ou *livraison*.");
-            }
-
-            if ($state['type_service'] === 'livraison') {
-                $state['step'] = 'await_address';
-                $this->store->set($from, $state);
-                return $this->twiml("📍 Donnez l’adresse complète SVP.");
-            }
-
-            $state['address'] = null;
-            $state['step']    = 'await_confirm';
-            $this->store->set($from, $state);
-            return $this->twiml($prefix.$this->recap($state)."\n\nPour valider : *valider Nom, Téléphone*");
-        }
-
-        // --- FAQs (Excel via InfoProvider) ---
-        if (preg_match('~\b(horaire|ouvert|fermé|ouverture)\b~i', $lower))      return $this->twiml($prefix.$this->info->horaires());
-        if (preg_match('~\b(promo|promotion|réduction|offre|happy hour)\b~i', $lower)) return $this->twiml($prefix.$this->info->promos());
-        if (preg_match('~\b(wifi|wi[- ]?fi|service|paiement|clim|prise|ambiance)\b~i', $lower)) return $this->twiml($prefix.$this->info->services());
-        if (preg_match('~\b(allerg|gluten|lactose|végan|végéta)\b~i', $lower))  return $this->twiml($prefix.$this->info->allergenes());
-        // On parle explicitement des ZONES / FRAIS / DÉLAIS de livraison
-if (preg_match('~\b(livraison|livrer)\b~i', $lower) 
-    && preg_match('~\b(zones?|frais|d[ée]lais?|tarifs?|prix)\b~i', $lower)) {
-    return $this->twiml($prefix.$this->info->livraisonZones());
-}
-
-        if (preg_match('~\b(conseil|recomman|id[ée]e)\b~i', $lower))            return $this->twiml($prefix.$this->info->conseilsIntro());
-        if (preg_match('~\b(r[ée]serv|table|anniversaire)\b~i', $lower))        return $this->twiml($prefix.$this->info->reservation());
-        if (preg_match('~\b(contact|t[ée]l[ée]phone|email|mail)\b~i', $lower))  return $this->twiml($prefix.$this->info->infosContact());
-
-        // --- Suivi commande "CMD-000123" ---
-        if (preg_match('~(où|ou|statut|suivi).*(commande|cmd)[^\d]*(\d{6})~i', $lower, $m)) {
-            $id = (int)$m[3];
-            $cmd = $this->em->getRepository(Commande::class)->find($id);
-            if (!$cmd) return $this->twiml("Je ne trouve pas la commande *CMD-".sprintf('%06d',$id)."*.");
-            return $this->twiml(
-                "📋 Statut de *CMD-".sprintf('%06d',$cmd->getId())."* : ".$cmd->getStatut()->getLabel().
-                "\nTotal : ".$cmd->getFormattedTotal()
-            );
-        }
-
-        // --- Commandes rapides ---
-        if (preg_match('~^annuler\b~i', $body)) {
-            $this->store->reset($from);
-            return $this->twiml("🗑️ Commande annulée. Tapez *menu* pour recommencer.");
-        }
-        if (preg_match('~^modifier\b~i', $body)) {
-            $state['step']  = 'await_items';
-            $state['items'] = [];
-            $state['total'] = 0.0;
-            $this->store->set($from, $state);
-            return $this->twiml("D’accord. Dites-moi ce que vous souhaitez (ex: *Margherita x2, Coca x1*).");
-        }
-
-        // --- Afficher le menu (phrases naturelles incluses) ---
-        if (preg_match('~\b(menu|voir le menu|donne[rz]? le menu|peux[- ]?tu.*menu|je veux.*menu)\b~i', $lower)) {
-            $items = $this->menu->getMenu();
-            if (!$items) return $this->twiml("Désolé, le menu est indisponible pour le moment.");
-            $txt = "📋 Voici notre menu :\n\n";
-            foreach ($items as $i) $txt .= "🍽 {$i['name']} — {$i['price']} MAD\n";
-            $state['step'] = 'await_items';
-            $state['items'] = $state['items'] ?? [];
-            $state['total'] = $state['total'] ?? 0.0;
-            $this->store->set($from, $state);
-            return $this->twiml($prefix.$txt."\n\nPour commander : *NomDuPlat xQuantité* (ex: *Margherita x2*).");
-        }
-
-        // --- Ajustements panier (retirer / quantité) ---
-        if (preg_match('~^retirer\s+(.+)$~i', $body, $m)) {
-            $want = trim($m[1]); $qty = 1;
-            if (preg_match('~(.+)\s+x\s*(\d+)$~i', $want, $mm)) { $want = trim($mm[1]); $qty = (int)$mm[2]; }
-            $new = [];
-            foreach ($state['items'] ?? [] as $it) {
-                if (mb_strtolower($it['name']) === mb_strtolower($want)) {
-                    $it['qty'] -= $qty;
-                    if ($it['qty'] > 0) $new[] = $it;
-                } else $new[] = $it;
-            }
-            $state['items'] = $new;
-            $state['total'] = array_reduce($new, fn($s,$i)=>$s+$i['qty']*$i['price'], 0.0);
-            $this->store->set($from, $state);
-            return $this->twiml($prefix.$this->recap($state)."\n\nTapez *valider Nom, Téléphone* quand c'est bon.");
-        }
-
-        if (preg_match('~^quantit[eé]\s+(.+?)\s+x\s*(\d+)$~i', $body, $m)) {
-            $name = trim($m[1]); $q = max(1,(int)$m[2]);
-            foreach ($state['items'] ?? [] as &$it) {
-                if (mb_strtolower($it['name']) === mb_strtolower($name)) $it['qty'] = $q;
-            } unset($it);
-            $state['total'] = array_reduce($state['items'] ?? [], fn($s,$i)=>$s+$i['qty']*$i['price'], 0.0);
-            $this->store->set($from, $state);
-            return $this->twiml($prefix.$this->recap($state)."\n\nTapez *valider Nom, Téléphone* quand c'est bon.");
-        }
-
-        // --- Démarrage / ajout d'articles ---
-        if (($state['step'] ?? null) === 'await_items' || preg_match('~^\s*(commander|je veux|je prends)\b~i', $body)) {
-            $picked = $this->parseItems($body);
-            if (!$picked && ($state['step'] ?? null) !== 'await_items') {
-                $state['step'] = 'await_items';
-                $this->store->set($from, $state);
-                return $this->twiml("Dites ce que vous voulez : *Plat xQte* (ex: *Margherita x2*).");
-            }
-
-            foreach ($picked as $p) {
-                $row = $this->menu->findByName($p['name']);
-                if (!$row) continue;
-                $state['items'][] = [
-                    'name'  => $row['name'],
-                    'qty'   => max(1,(int)$p['qty']),
-                    'price' => (float)$row['price'],
-                ];
-            }
-            // ✅ Vérifie s'il existe des personnalisations pour le **dernier article ajouté**
-$idxLast = array_key_last($state['items'] ?? []);
-if ($idxLast !== null) {
-    $lastName = $state['items'][$idxLast]['name'];
-    $catalog  = $this->perso->getCatalogFor($lastName);
-    if (!empty($catalog)) {
-        // On passe en étape de personnalisation
-        $state['step'] = 'await_customization';
-        $state['customizing'] = [
-            'index'    => $idxLast,
-            'itemName' => $lastName,
-            'catalog'  => $catalog, // on garde le catalogue pour formater l'invite
+        $brand = $this->brandHeader();
+        $state = $this->store->get($from) ?? [
+            'items'        => [],
+            'type_service' => null,
+            'address'      => null,
+            'name'         => null,
+            'phone'        => null,
+            'customization_hint' => [],
+            'total'        => 0.0,
+            'step'         => 'draft',
         ];
-        $this->store->set($from, $state);
 
-        $msg = "🛠️ Personnalisation pour *{$lastName}* :\n";
-        $msg .= $this->formatCatalogFor($catalog);
-        $msg .= "\n\nRépondez comme ceci, par exemple :\n";
-        $msg .= "- taille: large; cuisson: saignante\n";
-        $msg .= "- fromage: 2; glace: oui\n";
-        return $this->twiml($prefix.$msg);
-    }
-}
-
-            $state['total'] = array_reduce($state['items'] ?? [], fn($s,$i)=>$s+$i['qty']*$i['price'], 0.0);
-            $state['step']  = 'await_service';
-            $this->store->set($from, $state);
-            return $this->twiml($prefix.$this->recap($state)."\n\nChoisissez *sur place*, *emporter* ou *livraison*.");
+        // =================== Réponses instantanées (sans IA) ===================
+        if (preg_match('~^(salut|salam|slm|bonjour|bonsoir|hey|coucou|hello|السلام|مرحبا)\b~u', $lower)) {
+            return $this->twiml($brand."Bienvenue ! Tape *menu* pour voir la carte ou envoie tes plats : *Pizza Margherita x2, Oulmès x1*.");
         }
 
-        
+        if (preg_match('~\b(menu|voir\s+le\s+menu|القائمة|المنيو)\b~u', $lower)) {
+            $rows = $this->menu->getMenu();
+            if (!$rows) return $this->twiml($brand."Le menu est indisponible pour le moment.");
 
-        // --- Adresse livraison ---
-        if (($state['step'] ?? null) === 'await_address') {
-            if (mb_strlen($body) < 5) return $this->twiml("Adresse trop courte, pouvez-vous préciser ?");
-            $state['address'] = $body;
-            $state['step']    = 'await_confirm';
-            $this->store->set($from, $state);
-            return $this->twiml($prefix.$this->recap($state)."\n\nPour valider : *valider Nom, Téléphone*");
-        }
-// --- Personnalisation en cours ---
-if (($state['step'] ?? null) === 'await_customization') {
-    $conf = $this->parseCustomization($body); // ex: ["taille"=>"large","cuisson"=>"saignante","fromage"=>2,"glace"=>true]
-
-    $idx  = (int)($state['customizing']['index'] ?? -1);
-    $name = (string)($state['customizing']['itemName'] ?? '');
-
-    if ($idx < 0 || !isset($state['items'][$idx]) || !$name) {
-        // Sécurité: si l'état est bancal, on reprend sur le service
-        $state['step'] = 'await_service';
-        $this->store->set($from, $state);
-        return $this->twiml($this->recap($state)."\n\nChoisissez *sur place*, *emporter* ou *livraison*.");
-    }
-
-    // ✅ Calcule le delta prix des options sélectionnées
-    $delta = $this->perso->computeDelta($name, $conf);
-
-    // On sauvegarde la sélection et le delta dans l'item
-    $state['items'][$idx]['custom'] = $conf;
-    $state['items'][$idx]['delta']  = $delta; // delta **par unité**
-
-    // Recalcule le total (incluant delta)
-    $state['total'] = array_reduce($state['items'] ?? [], function($s, $i) {
-        $u = (float)$i['price'] + (float)($i['delta'] ?? 0);
-        return $s + $u * (int)$i['qty'];
-    }, 0.0);
-
-    // On repart sur le choix du type de service
-    $state['step'] = 'await_service';
-    unset($state['customizing']);
-    $this->store->set($from, $state);
-
-    $ok = "✅ Personnalisation appliquée à *{$name}*.";
-    return $this->twiml($prefix.$ok."\n\n".$this->recap($state)."\n\nChoisissez *sur place*, *emporter* ou *livraison*.");
-}
-
-        // --- Validation ---
-        if (($state['step'] ?? null) === 'await_confirm') {
-            if (!preg_match('~^valider\s+([^,]+)\s*,\s*([\d\s\+]+)~i', $body, $m)) {
-                return $this->twiml("Format attendu : *valider Nom, Téléphone*");
+            $byCat = [];
+            foreach ($rows as $r) {
+                if (isset($r['disponible']) && !$r['disponible']) continue;
+                $cat = $r['category_name'] ?: 'Autres';
+                $byCat[$cat][] = [$r['name'] ?? $r['nom'] ?? '', (float)($r['price'] ?? $r['prix'] ?? 0)];
             }
-            $state['name']  = trim($m[1]);
-            $state['phone'] = preg_replace('~\D+~','',$m[2] ?? '');
+            if (empty($byCat)) return $this->twiml($brand."Le menu est indisponible pour le moment.");
 
-            // User
-            $user = $this->findOrCreateUser($state['name'], $state['phone']);
+            ksort($byCat, SORT_NATURAL | SORT_FLAG_CASE);
+            foreach ($byCat as &$items) usort($items, fn($a,$b)=>strcasecmp($a[0],$b[0]));
+            unset($items);
 
-            // Commande
-            $commande = new Commande();
-            $commande->setUser($user);
-            $commande->setStatut(StatutCommandeEnum::CONFIRMEE);
-            $commande->setTypeService(match ($state['type_service'] ?? 'sur_place') {
-                'sur_place' => TypeServiceEnum::SUR_PLACE,
-                'emporter'  => TypeServiceEnum::EMPORTER,
-                'livraison' => TypeServiceEnum::LIVRAISON,
-                default     => TypeServiceEnum::SUR_PLACE
-            });
-            $commande->setAdresseLivraison(($state['type_service'] ?? null) === 'livraison' ? ($state['address'] ?? null) : null);
-
-            $this->em->persist($commande);
-
-            // Lignes (dédup par nom) — on lie MenuItem si trouvé
-            $linesTotal = 0.0;
-            $grouped = [];
-            foreach (($state['items'] ?? []) as $it) {
-                $unit = (float)$it['price'] + (float)($it['delta'] ?? 0); // prix Excel + delta options
-$k = mb_strtolower(trim($it['name'])) . '|' . md5(json_encode($it['custom'] ?? [])); // évite de fusionner 2 configs différentes
-if (!isset($grouped[$k])) {
-    $grouped[$k] = [
-        'name'   => $it['name'],
-        'qty'    => (int)$it['qty'],
-        'price'  => $unit,
-        'custom' => $it['custom'] ?? []
-    ];
-} else {
-    $grouped[$k]['qty'] += (int)$it['qty'];
-}
-
-            }
-
-            foreach ($grouped as $g) {
-               $line = new CommandeItem();
-$line->setCommande($commande);
-$line->setQuantite($g['qty']);
-$line->setPrixUnitaire(number_format($g['price'], 2, '.', '')); // déjà base + delta
-$line->setPersonalisationJson($g['custom'] ?: null);            // ⬅️ on stocke la personnalisation
-$line->setCommentaire($g['name']);
-
-                $menuItem = $this->em->getRepository(MenuItem::class)->findOneBy(['nom' => $g['name']]);
-                if ($menuItem) {
-                    $line->setMenuItem($menuItem); // OK si JoinColumn nullable=true; sinon il FAUT un MenuItem
+            $out = ["📋 Menu :"];
+            foreach ($byCat as $cat => $items) {
+                $out[] = "\n*".$cat."*";
+                foreach ($items as [$name, $price]) {
+                    if (!$name) continue;
+                    $out[] = "• {$name} — ".number_format($price, 2)." MAD";
                 }
+            }
+            $out[] = "\nPour commander : *NomDuPlat xQuantité* (ex: *Pizza Margherita x2*)";
+            return $this->twiml($brand.implode("\n", $out));
+        }
+        // ======================================================================
 
-                $commande->addCommandeItem($line);
-                $this->em->persist($line);
+        // =================== Parsing / mise à jour de l’état ===================
+        $menuRows  = $this->menu->getMenu() ?: [];
+        $menuIndex = $this->indexMenu($menuRows);
 
-                $linesTotal += $g['price'] * $g['qty'];
+        // 1) Détection type de service
+        $service = $this->detectService($lower);
+        if ($service) {
+            $state['type_service'] = $service;
+            $state['step'] = 'await_items';
+        }
+
+        // 2) Si c’est une adresse (livraison) sans mot-clé “livraison”
+        if (empty($state['address']) && $this->looksLikeAddress($body)) {
+            $state['address'] = trim($body);
+            $state['step'] = 'await_items';
+        }
+
+        // 3) Personnalisation “k:v; k:v”
+        $inlineOpts = $this->parseCustomizationPairs($body);
+        if (!empty($inlineOpts)) {
+            $state['customization_hint'] = $inlineOpts;
+            // si on a déjà des items en mémoire → applique au dernier
+            if (!empty($state['items'])) {
+                $last = array_key_last($state['items']);
+                $state['items'][$last]['customizations'] = $this->mergeCustom($state['items'][$last]['customizations'] ?? [], $inlineOpts);
+            }
+        }
+
+        // 4) Items “Nom xQte” présents dans ce message ?
+        $parsedNow = $this->parseItemsAgainstMenu($body, $menuIndex);
+        if (!empty($parsedNow)) {
+            // si options inline dans le même message → colle au dernier item parsé-now
+            if (!empty($inlineOpts)) {
+                $lastIdx = array_key_last($parsedNow);
+                $parsedNow[$lastIdx]['customizations'] = $this->mergeCustom($parsedNow[$lastIdx]['customizations'] ?? [], $inlineOpts);
             }
 
-            $commande->setTotal(number_format($linesTotal, 2, '.', ''));
-
-            // Snapshot JSON
-            $snapshot = [
-                'items'        => $state['items'] ?? [],
-                'type_service' => $state['type_service'] ?? null,
-                'address'      => $state['address'] ?? null,
-                'name'         => $state['name'] ?? null,
-                'phone'        => $state['phone'] ?? null,
-                'total_calc'   => $linesTotal,
-                'created_at'   => date('c'),
-            ];
-            $commande->setCommentaire(json_encode($snapshot, JSON_UNESCAPED_UNICODE));
-
-            // Sauvegarde
-            $this->em->flush();
-            $this->em->refresh($commande);
-
-            // Réponse finale
-            $ref       = $commande->getReference();
-            $typeLabel = $commande->getTypeService()->getLabel();
-
-            $msg  = "🎉 Commande validée !\n";
-            $msg .= "- Ref: {$ref}\n";
-            $msg .= "- Client: {$state['name']}\n";
-            $msg .= "- Type: {$typeLabel}\n";
-            if ($commande->isDelivery() && $commande->getAdresseLivraison()) {
-                $msg .= "- Adresse: {$commande->getAdresseLivraison()}\n";
+            // merge avec l’état : si même nom, additionne la quantité
+            foreach ($parsedNow as $newIt) {
+                $merged = false;
+                foreach ($state['items'] as &$oldIt) {
+                    if (mb_strtolower($oldIt['name']) === mb_strtolower($newIt['name'])) {
+                        $oldIt['quantity'] += $newIt['quantity'];
+                        $oldIt['base_unit_price']  = $newIt['base_unit_price']; // garde le dernier prix du menu
+                        // merge custom
+                        if (!empty($newIt['customizations'])) {
+                            $oldIt['customizations'] = $this->mergeCustom($oldIt['customizations'] ?? [], $newIt['customizations']);
+                        }
+                        $merged = true;
+                        break;
+                    }
+                }
+                unset($oldIt);
+                if (!$merged) $state['items'][] = $newIt;
             }
-            $msg .= "- Total: ".number_format($linesTotal, 2)." DH\n";
-            $msg .= "Merci 🙏";
+        }
+
+        // Recalcule les prix (delta=0 ici; hook pour deltas si PersonalizationService les fournit)
+        $subtotal = 0.0;
+        foreach ($state['items'] as &$it) {
+            $base  = (float)($it['base_unit_price'] ?? $it['final_unit_price'] ?? 0);
+            $delta = (float)($it['delta_unit_price'] ?? 0);
+            // TODO: si tu veux majorer selon supplements, calcule $delta ici avec $this->perso / BDD
+            $it['final_unit_price'] = $base + $delta;
+            $subtotal += ((int)$it['quantity']) * $it['final_unit_price'];
+        }
+        unset($it);
+        $state['total'] = round($subtotal,2);
+
+        // Sauvegarde immédiate de l’état
+        $this->store->set($from, $state);
+
+        // ===================== Confirmation “je confirme” ======================
+        if ($this->looksLikeConfirm($body)) {
+            // On reconstruit un aiPayload à partir de l’état (même si ce message ne contient pas d’items)
+            $aiPayload = $this->payloadFromState($from, $state);
+
+            // Besoin d’adresse si livraison ?
+            if (($aiPayload['order']['service_type'] ?? null) === 'LIVRAISON' && empty(trim((string)$aiPayload['order']['delivery_address']))) {
+                return $this->twiml($brand."Pour *livraison*, donne l’adresse complète (quartier, rue, numéro).");
+            }
+
+            // Garde-fou
+            $errors = $this->guard->validate($aiPayload);
+            if (!empty($errors)) {
+                return $this->twiml($brand."🔎 Il manque :\n- ".implode("\n- ", $errors));
+            }
+
+            // Persistance
+            try {
+                @file_put_contents(
+                    $this->getParameter('kernel.project_dir').'/var/log/last_ai_payload.json',
+                    json_encode($aiPayload, JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT)
+                );
+                $this->em->beginTransaction();
+                $cmd = $this->mapper->buildCommandeFromPayload($aiPayload);
+                $this->em->persist($cmd);
+                $this->em->flush();
+                $this->em->commit();
+                $this->em->refresh($cmd);
+            } catch (\Throwable $e) {
+                $this->em->rollback();
+                $logger->error('[ORDER_PERSIST_FAIL]', ['error' => $e->getMessage()]);
+                return $this->twiml($brand."Problème d’enregistrement. Réessaie ou envoie *annuler*.");
+            }
+
+            // reset et réponse finale
+            $this->store->reset($from);
+            $reply = $brand."✅ Commande confirmée.\n🎉 Réf: ".$cmd->getReference()." — Total: ".$cmd->getFormattedTotal();
+            return $this->twiml($reply);
+        }
+        // ======================================================================
+
+        // ===================== Si on a déjà des items =========================
+        if (!empty($state['items'])) {
+            // S’il manque le service
+            if (empty($state['type_service'])) {
+                return $this->twiml($brand."Tu préfères *SUR_PLACE*, *EMPORTER* ou *LIVRAISON* ?");
+            }
+            // S’il faut une adresse
+            if ($state['type_service']==='LIVRAISON' && empty($state['address'])) {
+                return $this->twiml($brand."Pour *livraison*, indique l’adresse complète (quartier, rue, numéro).");
+            }
+            // Tout y est → récap + demande de confirmation
+            $txt = $this->buildRecapText($state['items'], $state['type_service'], $state['address'], (float)$state['total']);
+            return $this->twiml($brand.$txt);
+        }
+        // ======================================================================
+
+        // ===================== Secours IA si rien compris ======================
+        $system = @file_get_contents($this->getParameter('kernel.project_dir').'/var/prompts/order_system.txt');
+        if (!$system) {
+            $system =
+                "Tu es un assistant de commande WhatsApp pour K&I Restaurant. "
+              . "Langue = celle du client (darija/ar/fr/en), réponses brèves et naturelles. "
+              . "Aide : menu, type de service {SUR_PLACE, EMPORTER, LIVRAISON}, adresse (si livraison), nom & téléphone si nécessaire. "
+              . "Ne redemande pas une info déjà connue (service, adresse...). "
+              . "Toujours produire un récap clair (articles, options, service, total) puis demander confirmation. "
+              . "assistant_text = texte humain court (jamais de JSON). Pose UNE question à la fois.";
+        }
+
+        $catalogs = method_exists($this->perso,'getAllCatalogs') ? $this->perso->getAllCatalogs() : [];
+        $fallbackVisible = $brand."Je peux t’aider : *menu* pour voir la carte, ou *Nom xQte* (ex: *Pizza Margherita x2*).";
+
+        try {
+            $aiPayload = $this->groq->infer([
+                'from'            => $from,
+                'user_text'       => $body,
+                'state'           => $state,
+                'menu'            => $menuRows,
+                'catalogs'        => $catalogs,
+                'system_prompt'   => $system,
+                'timeout_seconds' => 6,
+            ]);
+        } catch (\Throwable $e) {
+            $logger->error('[IA_CALL_FAIL]', ['err'=>$e->getMessage()]);
+            return $this->twiml($fallbackVisible);
+        }
+
+        $assistantText = $this->sanitizeAssistantText($aiPayload['assistant_text'] ?? null);
+        if (!isset($aiPayload['conversation'], $aiPayload['order'], $aiPayload['actions'])) {
+            return $this->twiml($assistantText ?: $fallbackVisible);
+        }
+
+        // Normalisations essentielles
+        if (!empty($aiPayload['order']['service_type'])) {
+            $aiPayload['order']['service_type'] = strtoupper($aiPayload['order']['service_type']);
+        } elseif (!empty($state['type_service'])) {
+            $aiPayload['order']['service_type'] = strtoupper($state['type_service']);
+        }
+        $digits = preg_replace('~\D+~', '', $from);
+        if (empty($aiPayload['order']['customer']['phone']) && $digits) {
+            $aiPayload['order']['customer']['phone'] = $digits;
+        }
+        if (empty($aiPayload['order']['customer']['name'])) {
+            $aiPayload['order']['customer']['name'] = $state['name'] ?? 'WhatsApp Client';
+        }
+
+        // Si items mais pas confirmé → récap auto
+        $hasItems = !empty($aiPayload['order']['items']);
+        $isConfirmed = ($aiPayload['actions']['confirmed'] ?? false) === true;
+        if ($hasItems && !$isConfirmed && !$assistantText) {
+            $svc  = $aiPayload['order']['service_type'] ?? '';
+            $addr = trim((string)($aiPayload['order']['delivery_address'] ?? ''));
+            $lines = [];
+            $sum = 0.0;
+            foreach ($aiPayload['order']['items'] as $it) {
+                $q = (int)($it['quantity'] ?? 1);
+                $p = (float)($it['final_unit_price'] ?? $it['base_unit_price'] ?? 0);
+                $sum += $q*$p;
+                $optTxt = '';
+                if (!empty($it['customizations']) && is_array($it['customizations'])) {
+                    $kv = [];
+                    foreach ($it['customizations'] as $k=>$v) {
+                        if (is_array($v)) $v = implode(', ', $v);
+                        $kv[] = $k.': '.$v;
+                    }
+                    if ($kv) $optTxt = ' ('.implode(', ', $kv).')';
+                }
+                $lines[] = "- {$q}× {$it['name']}{$optTxt} — ".number_format($q*$p, 2)." MAD";
+            }
+            $total = (float)($aiPayload['order']['totals']['grand_total'] ?? $sum);
+            $svcLabel = $svc ? ("*Service* : ".str_replace('_',' ',ucfirst(strtolower($svc)))."\n") : '';
+            $addrLine = ($svc === 'LIVRAISON' && $addr) ? "*Adresse* : {$addr}\n" : '';
+            $assistantText =
+                "🧾 Récap commande :\n".
+                implode("\n", $lines)."\n".
+                $svcLabel.$addrLine.
+                "*Total* : ".number_format($total,2)." MAD\n\n".
+                "Confirmez ? (répondez *je confirme* ou *ok*)";
+        }
+
+        // Mise à jour mémoire avec ce que l’IA a compris
+        $this->store->set($from, [
+            'from'         => $from,
+            'step'         => $aiPayload['conversation']['status'] ?? 'draft',
+            'items'        => $aiPayload['order']['items'] ?? [],
+            'type_service' => $aiPayload['order']['service_type'] ?? ($state['type_service'] ?? null),
+            'address'      => $aiPayload['order']['delivery_address'] ?? null,
+            'name'         => $aiPayload['order']['customer']['name'] ?? null,
+            'phone'        => $aiPayload['order']['customer']['phone'] ?? null,
+            'total'        => $aiPayload['order']['totals']['grand_total'] ?? 0.0,
+            'customization_hint' => $state['customization_hint'] ?? [],
+        ]);
+
+        // Besoin d’adresse ?
+        if (($aiPayload['order']['service_type'] ?? null) === 'LIVRAISON' &&
+            empty(trim((string)($aiPayload['order']['delivery_address'] ?? '')))) {
+            return $this->twiml($brand."Pour *livraison*, j’ai besoin de l’adresse complète (quartier, rue, numéro).");
+        }
+
+        // Garde-fou
+        $errors = $this->guard->validate($aiPayload);
+        if (!empty($errors) && !$isConfirmed) {
+            $visible = $assistantText ?: ("🔎 Il manque :\n- ".implode("\n- ", $errors));
+            return $this->twiml($brand.$visible);
+        }
+
+        // Confirmé → enregistrer
+        if ($isConfirmed) {
+            try {
+                @file_put_contents(
+                    $this->getParameter('kernel.project_dir').'/var/log/last_ai_payload.json',
+                    json_encode($aiPayload, JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT)
+                );
+                $this->em->beginTransaction();
+                $cmd = $this->mapper->buildCommandeFromPayload($aiPayload);
+                $this->em->persist($cmd);
+                $this->em->flush();
+                $this->em->commit();
+                $this->em->refresh($cmd);
+            } catch (\Throwable $e) {
+                $this->em->rollback();
+                $logger->error('[ORDER_PERSIST_FAIL]', ['error' => $e->getMessage()]);
+                return $this->twiml($brand."Problème d’enregistrement. Réessaie ou envoie *annuler*.");
+            }
 
             $this->store->reset($from);
-            return $this->twiml($msg);
+            $reply = $brand."✅ Commande confirmée.\n🎉 Réf: ".$cmd->getReference()." — Total: ".$cmd->getFormattedTotal();
+            return $this->twiml($reply);
         }
 
-        // --- Reco (inactif > 30j)
-        $digits = preg_replace('~\D+~', '', $from) ?: '0000';
-        $user = $this->findUserByPhone($digits);
-        if ($user && $this->reco->isInactiveSince($user, 30)) {
-            $tops = $this->reco->topItems($user, 3);
-            if ($tops) {
-                $txt = "👋 Heureux de vous revoir ! Suggestions basées sur vos précédentes commandes :\n";
-                foreach ($tops as $t) $txt .= "• {$t}\n";
-                $txt .= "\nTapez *menu* pour voir la carte ou *commander <plat> x<qte>* pour commencer.";
-                return $this->twiml($txt);
-            }
-        }
-
-        // --- Fallback
-        return $this->twiml("Je peux vous aider à *voir le menu* (tapez *menu*) et *passer commande*.\nEx: *Margherita x2*.");
+        return $this->twiml($brand.($assistantText ?: $fallbackVisible));
     }
 
-    // ------------------ Helpers ------------------
+    // ==================== Helpers ====================
 
-    private function parseItems(string $text): array
+    private function brandHeader(): string
     {
-        $text = preg_replace('~^(commander|je veux|je prends)\s+~i', '', trim($text));
-        $parts = preg_split('~[,;]| et ~i', $text);
-
-        $out = [];
-        foreach ($parts as $p) {
-            $p = trim($p);
-            if ($p === '') continue;
-
-            if (preg_match('~^\s*(.+?)\s*[xX]\s*(\d+)\s*$~u', $p, $m)) {
-                $out[] = ['name' => trim($m[1]), 'qty' => max(1, (int)$m[2])];
-            } else {
-                $out[] = ['name' => $p, 'qty' => 1];
-            }
-        }
-        return $out;
-    }
-
-    private function recap(array $state): string
-    {
-        $lines = ["✅ Récap commande :"];
-        foreach (($state['items'] ?? []) as $it) {
-            $lines[] = "- {$it['name']} x{$it['qty']}";
-        }
-        $total = array_reduce($state['items'] ?? [], function($s, $i){
-    $unit = (float)$i['price'] + (float)($i['delta'] ?? 0); // ⬅️ inclut delta
-    return $s + $unit * (int)$i['qty'];
-}, 0.0);
-
-        $lines[] = "- Total : ".number_format($total, 2)." MAD";
-        if (($state['type_service'] ?? null) === 'livraison' && !empty($state['address'])) {
-            $lines[] = "- Adresse: ".$state['address'];
-        }
-        return implode("\n", $lines);
-    }
-
-    private function findUserByPhone(string $digits): ?User
-    {
-        return $this->em->getRepository(User::class)->findOneBy(['telephone' => $digits]);
-    }
-
-    private function findOrCreateUser(string $name, string $digits): User
-    {
-        if ($u = $this->findUserByPhone($digits)) return $u;
-
-        $u = new User();
-        $u->setNom($name);
-        $u->setTelephone($digits);
-        $u->setEmail($digits.'@auto.local');
-        $u->setPassword(password_hash(bin2hex(random_bytes(12)), PASSWORD_BCRYPT));
-
-        $this->em->persist($u);
-        $this->em->flush();
-
-        return $u;
-    }
-
-    private function twiml(string $message, int $status = 200): Response
-    {
-        $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n".
-               "<Response>\n".
-               "    <Message>".htmlspecialchars($message, ENT_XML1)."</Message>\n".
-               "</Response>";
-        return new Response($xml, $status, ['Content-Type' => 'application/xml']);
-    }
-
-    private function maybeMenuUpdatedPrefix(array &$state, MenuProvider $menu, string $from): string
-    {
-        if (!method_exists($menu, 'getChecksum')) return '';
-        $checksum = $menu->getChecksum();
-        if ($checksum && (($state['menu_checksum'] ?? null) !== $checksum)) {
-            $state['menu_checksum'] = $checksum;
-            $this->store->set($from, $state);
-            return "ℹ️ Le menu vient d’être mis à jour.\n\n";
-        }
-        return '';
+        return "🍽️ K&I Restaurant\n\n";
     }
 
     private function isTwilioRequest(Request $request, string $authToken): bool
@@ -464,66 +385,226 @@ $line->setCommentaire($g['name']);
         $url       = $request->getSchemeAndHttpHost() . $request->getRequestUri();
         $params    = $request->request->all();
         ksort($params);
-
         $data = $url;
         foreach ($params as $k => $v) $data .= $k . $v;
-
         $expected = base64_encode(hash_hmac('sha1', $data, $authToken, true));
         return $signature && hash_equals($expected, $signature);
     }
 
-    /** Affiche joliment un catalogue d’options pour un article */
-private function formatCatalogFor(array $catalog): string
-{
-    // $catalog = [
-    //   ['type'=>'taille','label'=>'Taille','input'=>'select','base'=>0,'values'=>['small'=>['label'=>'Petite','delta'=>0], ...]],
-    //   ...
-    // ]
-    $out = [];
-    foreach ($catalog as $opt) {
-        $line = "• *{$opt['label']}* ({$opt['input']})";
-        $vals = [];
-        foreach (($opt['values'] ?? []) as $key => $info) {
-            $lab = $info['label'] ?? $key;
-            $d   = (float)($info['delta'] ?? 0);
-            $vals[] = $d > 0 ? "{$lab} (+{$d} DH)" : $lab;
+    private function twiml(string $message, int $status = 200): Response
+    {
+        $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n".
+            "<Response>\n".
+            "  <Message>".htmlspecialchars($message, ENT_XML1 | ENT_COMPAT, 'UTF-8')."</Message>\n".
+            "</Response>";
+        return new Response($xml, $status, ['Content-Type' => 'text/xml; charset=utf-8']);
+    }
+
+    private function sanitizeAssistantText(?string $txt): string
+    {
+        if (!is_string($txt) || $txt === '') return '';
+        if (preg_match('/^\s*[\{\[]/u', $txt)) {
+            $decoded = json_decode($txt, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                if (!empty($decoded['assistant_text']) && is_string($decoded['assistant_text'])) {
+                    return $decoded['assistant_text'];
+                }
+            }
+            return "Bien noté. Tu préfères SUR_PLACE, EMPORTER ou LIVRAISON ?";
         }
-        if ($vals) $line .= " : " . implode(', ', $vals);
-        $out[] = $line;
+        if (strlen($txt) > 0 && str_contains($txt, '{') && str_contains($txt, '}')) {
+            return "Bien noté. Tu préfères SUR_PLACE, EMPORTER ou LIVRAISON ?";
+        }
+        return $txt;
     }
-    return implode("\n", $out);
-}
 
-/** Parse une réponse utilisateur en dictionnaire de choix par type (très tolérant) */
-private function parseCustomization(string $text): array
-{
-    // ex entrées possibles :
-    // "taille: large; cuisson: saignante; fromage: 2; glace: oui"
-    $pairs = preg_split('~[;\n]+~', $text);
-    $out = [];
-    foreach ($pairs as $p) {
-        if (!str_contains($p, ':')) continue;
-        [$k, $v] = array_map('trim', explode(':', $p, 2));
-        $k = $this->normKey($k);
-        $v = trim($v);
-
-        // normalisations rapides
-        if ($v === '' || preg_match('~^(non|no|0)$~i', $v))  { $out[$k] = false; continue; }
-        if (preg_match('~^(oui|yes|1)$~i', $v))              { $out[$k] = true;  continue; }
-        if (preg_match('~^\d+$~', $v))                      { $out[$k] = (int)$v; continue; }
-
-        // valeur textuelle (clé d’option)
-        $out[$k] = mb_strtolower($v);
+    /** Construit un aiPayload “confirmed” à partir de l’état courant */
+    private function payloadFromState(string $from, array $state): array
+    {
+        $digits = preg_replace('~\D+~', '', $from);
+        $items  = [];
+        $subtotal = 0.0;
+        foreach ($state['items'] as $it) {
+            $q = (int)$it['quantity'];
+            $base  = (float)($it['base_unit_price'] ?? $it['final_unit_price'] ?? 0);
+            $delta = (float)($it['delta_unit_price'] ?? 0);
+            $final = $base + $delta;
+            $subtotal += $q * $final;
+            $items[] = [
+                'name'             => $it['name'],
+                'quantity'         => $q,
+                'base_unit_price'  => $base,
+                'delta_unit_price' => $delta,
+                'final_unit_price' => $final,
+                'customizations'   => $it['customizations'] ?? [],
+            ];
+        }
+        return [
+            'assistant_text' => "Commande confirmée.",
+            'conversation'   => ['from'=>$from,'language'=>'fr','status'=>'confirmed'],
+            'order' => [
+                'items'            => $items,
+                'service_type'     => strtoupper((string)($state['type_service'] ?? '')),
+                'delivery_address' => $state['address'] ?? null,
+                'customer'         => ['name'=>$state['name'] ?? 'WhatsApp Client', 'phone'=>$digits],
+                'currency'         => 'MAD',
+                'totals'           => [
+                    'items_subtotal' => round($subtotal,2),
+                    'delivery_fee'   => 0,
+                    'grand_total'    => round($subtotal,2),
+                ],
+            ],
+            'actions' => [
+                'need_service_type'      => empty($state['type_service']),
+                'need_address'           => ($state['type_service'] ?? '') === 'LIVRAISON' && empty(trim((string)($state['address'] ?? ''))),
+                'need_customer_info'     => false,
+                'ready_for_confirmation' => true,
+                'confirmed'              => true,
+                'cancelled'              => false,
+            ],
+        ];
     }
-    return $out;
-}
 
-private function normKey(string $s): string
-{
-    $s = mb_strtolower($s);
-    $s = strtr($s, ['à'=>'a','â'=>'a','ä'=>'a','é'=>'e','è'=>'e','ê'=>'e','ë'=>'e','î'=>'i','ï'=>'i','ô'=>'o','ö'=>'o','ù'=>'u','û'=>'u','ü'=>'u','ç'=>'c']);
-    $s = preg_replace('~[^a-z0-9]+~', '_', $s);
-    return trim($s, '_');
-}
+    // -------- Parsing local robuste --------
 
+    private function indexMenu(array $rows): array
+    {
+        $idx = [];
+        foreach ($rows as $r) {
+            if (isset($r['disponible']) && !$r['disponible']) continue;
+            $name = $r['name'] ?? $r['nom'] ?? '';
+            if ($name === '') continue;
+            $idx[$this->norm($name)] = [
+                'id'    => (int)($r['id'] ?? 0),
+                'name'  => $name,
+                'price' => (float)($r['price'] ?? $r['prix'] ?? 0),
+            ];
+        }
+        return $idx;
+    }
+
+    private function detectService(string $lower): ?string
+    {
+        if (preg_match('~\b(livraison|livrer|delivery|توصيل)\b~u', $lower)) return 'LIVRAISON';
+        if (preg_match('~\b(emporter|à\s*emporter|a\s*emporter|take\s*away|تيك\s*اواي)\b~u', $lower)) return 'EMPORTER';
+        if (preg_match('~\b(sur\s*place|على\s*المكان|هنا)\b~u', $lower)) return 'SUR_PLACE';
+        return null;
+    }
+
+    /** heuristique simple d’adresse */
+    private function looksLikeAddress(string $text): bool
+    {
+        return (bool)preg_match('~\b(rue|bd|avenue|quartier|حي|زنقة|douar|n°|numero|numéro|marrakech|casablanca|agadir)\b~iu', $text);
+    }
+
+    private function parseCustomizationPairs(string $text): array
+    {
+        $pairs = [];
+        $chunks = preg_split('~[;\n]+~u', $text);
+        foreach ($chunks as $c) {
+            if (!str_contains($c, ':')) continue;
+            [$k,$v] = array_map('trim', explode(':', $c, 2));
+            if ($k === '' || $v === '') continue;
+            $k = mb_strtolower($k);
+            $k = strtr($k, ['pâte'=>'pate']);
+            $vals = array_map('trim', preg_split('~[,،]+~u', $v));
+            $vals = array_values(array_filter($vals, fn($x)=>$x!==''));
+            if (empty($vals)) continue;
+            $pairs[$k] = count($vals) === 1 ? $vals[0] : $vals;
+        }
+        return $pairs;
+    }
+
+    private function mergeCustom(array $a, array $b): array
+    {
+        foreach ($b as $k=>$v) $a[$k] = $v;
+        return $a;
+    }
+
+    private function norm(string $s): string
+    {
+        $s = mb_strtolower(trim($s));
+        $s = strtr($s, ['à'=>'a','â'=>'a','ä'=>'a','é'=>'e','è'=>'e','ê'=>'e','ë'=>'e','î'=>'i','ï'=>'i','ô'=>'o','ö'=>'o','ù'=>'u','û'=>'u','ü'=>'u','ç'=>'c','œ'=>'oe']);
+        $s = preg_replace('~[^a-z0-9 ]+~',' ',$s);
+        $s = preg_replace('~\s+~',' ',$s);
+        return trim($s);
+    }
+
+    private function parseItemsAgainstMenu(string $text, array $menuIndex): array
+    {
+        // supporte "’ai choisi ..." en retirant un éventuel début bruité
+        $text = preg_replace("~^[’'`]+ai choisi\\s+~iu", "", $text);
+
+        $parts = preg_split('~[,;\n]|\\bet\\b~iu', $text);
+        $items = [];
+        foreach ($parts as $raw) {
+            $raw = trim($raw);
+            if ($raw==='') continue;
+
+            if (preg_match('~^(.*?)(?:\\s*[xX]\\s*(\\d+))$~u', $raw, $m)) {
+                $name = trim($m[1]);
+                $qty  = max(1, (int)$m[2]);
+            } else {
+                continue;
+            }
+            $n = $this->norm($name);
+
+            $match = $menuIndex[$n] ?? null;
+            if (!$match) {
+                $n2 = preg_replace('~^(pizza|boisson|burger)\\s+~u','', $n);
+                $match = $menuIndex[$n2] ?? null;
+            }
+            if (!$match) continue;
+
+            $items[] = [
+                'name'             => $match['name'],
+                'quantity'         => $qty,
+                'base_unit_price'  => (float)$match['price'],
+                'delta_unit_price' => 0.0,
+                'final_unit_price' => (float)$match['price'],
+                'customizations'   => [],
+            ];
+        }
+        return $items;
+    }
+
+    private function looksLikeConfirm(string $text): bool
+    {
+        return (bool)preg_match('~\\b(je\\s*confirme|confirme|ok|oui|d[’\'e]accord|daccord|yes|confirm|ايوا|نعم|خلاص|تمام)\\b~iu', $text);
+    }
+
+    private function buildRecapText(array $items, ?string $service, ?string $address, float $subtotal): string
+    {
+        $lines = ["🧾 Récap commande :"];
+        foreach ($items as $it) {
+            $q = (int)$it['quantity'];
+            $p = (float)$it['final_unit_price'];
+            $opts = '';
+            if (!empty($it['customizations'])) {
+                $kv = [];
+                foreach ($it['customizations'] as $k=>$v) {
+                    if (is_array($v)) $v = implode(', ', $v);
+                    $kv[] = "$k: $v";
+                }
+                if ($kv) $opts = ' ('.implode(', ', $kv).')';
+            }
+            $lines[] = "- {$q}× {$it['name']}{$opts} — ".number_format($q*$p,2)." MAD";
+        }
+        if ($service) $lines[] = "*Service* : ".str_replace('_',' ',ucfirst(strtolower($service)));
+        if ($service==='LIVRAISON' && $address) $lines[] = "*Adresse* : {$address}";
+        $lines[] = "*Total* : ".number_format($subtotal,2)." MAD";
+        $lines[] = "";
+        $lines[] = "Confirmez ? (répondez *je confirme* ou *ok*)";
+        return implode("\n", $lines);
+    }
+
+    // ---------------- PING debug ----------------
+    #[Route('/webhook/ping', name: 'whatsapp_ping', methods: ['POST','GET'])]
+    public function ping(Request $request): Response
+    {
+        error_log('[PING] hit method='.$request->getMethod().' t='.date('c'));
+        $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n".
+            "<Response><Message>PONG ✅</Message></Response>";
+        return new Response($xml, 200, ['Content-Type' => 'text/xml; charset=utf-8']);
+    }
 }

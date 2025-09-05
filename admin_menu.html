@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <link rel="shortcut icon" href="images/favicon.png" type="">
+  <title> Our Restaurant </title>
+
+
+  <link rel="stylesheet" type="text/css" href="css/bootstrap.css" />
+  <link rel="stylesheet" type="text/css"
+    href="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/assets/owl.carousel.min.css" />
+  <link rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/jquery-nice-select/1.1.0/css/nice-select.min.css" />
+  <link href="css/font-awesome.min.css" rel="stylesheet" />
+  <link href="css/style.css" rel="stylesheet" />
+  <link href="css/responsive.css" rel="stylesheet" />
+
+  <style>
+    .food_section { margin-bottom: 100px; }
+    img.item-img { width: 50px; height: 50px; object-fit: cover; }
+  </style>
+</head>
+
+
+
+<body class="sub_page">
+  <div class="hero_area">
+    <div class="bg-box">
+      <img src="images/hero-bg.jpg" alt="">
+    </div>
+    <header class="header_section">
+      <div class="container">
+        <nav class="navbar navbar-expand-lg custom_nav-container ">
+          <a class="navbar-brand" href="index.html"><span>               K&I Restaurant
+</span></a>
+          <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent"
+            aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+            <span class=""> </span>
+          </button>
+          <div class="collapse navbar-collapse" id="navbarSupportedContent">
+            <ul class="navbar-nav mx-auto">
+              <li class="nav-item"><a class="nav-link" href="index.html">Home</a></li>
+              <li class="nav-item"><a class="nav-link" href="categorie.html">Category</a></li>
+              <li class="nav-item active"><a class="nav-link" href="admin_menu.html">Item</a></li>
+              <li class="nav-item ">
+                <a class="nav-link" href="command.html">Command</a>
+              </li>
+              <li class="nav-item">
+            <a class="nav-link  font-weight-bold" href="signin.html">Exit</a>
+          </li>
+            </ul>
+
+          </div>
+        </nav>
+      </div>
+    </header>
+  </div>
+  <!--  admin menu  section -->
+  <div class="container mt-5">
+    <h2 class="text-center mb-4">
+         Our Items</h2>
+<!-- Toast de succès -->
+<div class="position-fixed top-0 end-0 p-3" style="z-index: 1050;">
+  <div id="successToast" class="toast align-items-center text-white bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body" id="successToastBody">
+        Opération réussie !
+      </div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+  </div>
+</div>
+    <!-- Formulaire ajout/modif -->
+    <div class="card mb-4">
+      <div class="card-body">
+        <h5 id="formTitle">Ajouter un nouvel item</h5>
+        <input type="hidden" id="itemId">
+        <div class="form-row">
+          <div class="form-group col-md-3">
+            <input type="text" id="itemName" class="form-control" placeholder="Nom" required>
+          </div>
+          <div class="form-group col-md-3">
+            <select id="itemCategory" class="form-control" required>
+              <option value="">Choisir une catégorie</option>
+            </select>
+          </div>
+          <div class="form-group col-md-2">
+            <input type="number" id="itemPrice" class="form-control" placeholder="Prix" required>
+          </div>
+          <div class="form-group col-md-3">
+            <input type="text" id="itemDescription" class="form-control" placeholder="Description" required>
+          </div>
+          <div class="form-group col-md-3">
+            <input type="file" id="itemImageFile" class="form-control" accept="image/*">
+          </div>
+          <div class="form-group col-md-1">
+            <button id="saveItemBtn" class="btn btn-success btn-block">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+              <form class="form-inline">
+                <input id="searchInput" class="form-control mr-sm-2" type="search" placeholder="Search...">
+              </form>
+
+    <!-- Tableau des items -->
+    <table class="table table-bordered table-striped">
+      <thead class="thead-dark">
+        <tr>
+          <th>Nom</th>
+          <th>Catégorie</th>
+          <th>Prix (DH)</th>
+          <th>Description</th>
+          <th>Image</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="menuItemsContainer"></tbody>
+    </table>
+  </div>
+  <!-- end admin menu  section -->
+  <script src="js/jquery-3.4.1.min.js"></script>
+  <script src="js/bootstrap.js"></script>
+
+<script>
+  
+const apiUrl = 'http://127.0.0.1:8000/api/menu-items';
+const apiCategoriesUrl = 'http://127.0.0.1:8000/api/categories';
+
+let cachedItems = []; // pour garder les items
+
+// ========== CHARGEMENT DES CATÉGORIES ==========
+async function loadCategories() {
+    try {
+        const res = await fetch(apiCategoriesUrl);
+        if (!res.ok) throw new Error("Erreur chargement catégories");
+        const categories = await res.json();
+        const select = document.getElementById('itemCategory');
+        select.innerHTML = '<option value="">Choisir une catégorie</option>';
+        categories.forEach(cat => {
+            const option = document.createElement('option');
+            option.value = cat.id;
+            option.textContent = cat.nom;
+            select.appendChild(option);
+        });
+    } catch (err) {
+        console.error("❌ Erreur loadCategories:", err);
+    }
+}
+
+// ========== CHARGEMENT DES ITEMS ==========
+async function loadMenuItems() {
+    try {
+        const res = await fetch(apiUrl);
+        if (!res.ok) throw new Error("Erreur chargement items");
+        const items = await res.json();
+        cachedItems = items;
+        const container = document.getElementById('menuItemsContainer');
+        container.innerHTML = '';
+        items.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${item.nom}</td>
+                <td>${item.category_name || ''}</td>
+                <td>${item.prix}</td>
+                <td>${item.description || ''}</td>
+                <td>
+                  ${item.image 
+                    ? `<img src="http://127.0.0.1:8000/images/${item.image}" class="item-img" style="width:50px;height:50px;">`
+                    : ''}
+                </td>
+                <td>
+                    <button class="btn btn-primary btn-sm" onclick="editItem(${item.id})">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteItem(${item.id})">Delete</button>
+                </td>
+            `;
+            container.appendChild(row);
+        });
+    } catch (err) {
+        console.error("❌ Erreur loadMenuItems:", err);
+    }
+}
+
+// ========== ÉDITER UN ITEM ==========
+function editItem(id) {
+    const item = cachedItems.find(i => i.id === id);
+    if (!item) return alert("Item introuvable");
+    document.getElementById('formTitle').innerText = 'Modifier Item';
+    document.getElementById('itemId').value = item.id;
+    document.getElementById('itemName').value = item.nom;
+    document.getElementById('itemCategory').value = item.category_id;
+    document.getElementById('itemPrice').value = item.prix;
+    document.getElementById('itemDescription').value = item.description || '';
+    document.getElementById('itemImageFile').value = '';
+}
+
+// ========== SUPPRIMER UN ITEM ==========
+async function deleteItem(id) {
+    if (!confirm('Voulez-vous vraiment supprimer cet item ?')) return;
+    try {
+        const res = await fetch(`${apiUrl}/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error("Erreur suppression");
+        loadMenuItems();
+    } catch (err) {
+        console.error("❌ Erreur deleteItem:", err);
+    }
+}
+
+// ========== AJOUT / MODIF ==========
+  document.getElementById('saveItemBtn').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('itemId').value;
+    const formData = new FormData();
+    formData.append('nom', document.getElementById('itemName').value);
+    formData.append('category_id', document.getElementById('itemCategory').value);
+    formData.append('prix', document.getElementById('itemPrice').value);
+    formData.append('description', document.getElementById('itemDescription').value);
+
+    const fileInput = document.getElementById('itemImageFile');
+    if (fileInput.files[0]) formData.append('image', fileInput.files[0]);
+
+    // Si modification, on utilise POST + _method=PUT pour Symfony
+    const url = id ? `${apiUrl}/${id}` : apiUrl;
+    if (id) formData.append('_method', 'PUT');
+
+    // Crée une fonction pour afficher le toast
+    function showSuccessToast(message) {
+        const toastEl = document.getElementById('successToast');
+        const toastBody = document.getElementById('successToastBody');
+        toastBody.innerText = message;
+
+        // Initialiser le toast avec Bootstrap
+        const toast = new bootstrap.Toast(toastEl, { delay: 3000 });
+        toast.show();
+    }
+
+    // Dans ton code saveItem, après succès
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Erreur serveur");
+
+        // Afficher toast
+        showSuccessToast(data.message || 'Opération réussie !');
+
+        // Mise à jour de cachedItems si modification
+        if (id && data.item) {
+            const index = cachedItems.findIndex(i => i.id === data.item.id);
+            if (index !== -1) cachedItems[index] = data.item;
+        }
+
+        // Reset formulaire
+        document.getElementById('itemId').value = '';
+        document.getElementById('itemName').value = '';
+        document.getElementById('itemCategory').value = '';
+        document.getElementById('itemPrice').value = '';
+        document.getElementById('itemDescription').value = '';
+        document.getElementById('itemImageFile').value = '';
+        document.getElementById('formTitle').innerText = 'Ajouter un nouvel item';
+
+        loadMenuItems();
+    } catch (err) {
+        console.error("❌ Erreur saveItem:", err);
+        alert("Erreur: " + err.message);
+    }
+
+});
+// Recherche en temps réel
+document.getElementById('searchInput').addEventListener('input', function() {
+    const filter = this.value.toLowerCase();
+    const container = document.getElementById('menuItemsContainer');
+    container.querySelectorAll('tr').forEach(row => {
+        const nom = row.cells[0].textContent.toLowerCase();
+        const category = row.cells[1].textContent.toLowerCase();
+        const description = row.cells[3].textContent.toLowerCase();
+        if(nom.includes(filter) || category.includes(filter) || description.includes(filter)) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+});
+
+// ========== INIT ==========
+loadCategories();
+loadMenuItems();
+
+</script>
+  <footer class="footer_section">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-4 footer-col">
+          <div class="footer_contact">
+            <h4>
+              Contact Us
+            </h4>
+            <div class="contact_link_box">
+              <a href="">
+                <i class="fa fa-phone" aria-hidden="true"></i>
+                <span>
+                  Call +14155238886
+                </span>
+              </a>
+              <a href="">
+                <i class="fa fa-envelope" aria-hidden="true"></i>
+                <span>
+                  K&IRestaurant@gmail.com
+                </span>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <div class="footer_detail">
+            <a href="" class="footer-logo">
+              K&I Restaurant
+            </a>
+            <p>
+              Delivering delicious food with love and passion. Our goal is to give you the best dining experience.
+            </p>
+
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <h4>
+            Opening Hours
+          </h4>
+          <p>
+            Lundi-Jeudi: 08:00-23:00
+          </p>
+          <p>
+            Vendredi: 12:00-23:00 (Couscous spécial)
+          </p>
+          <p>
+            Samedi: 08:00-00:00 (Service continu )
+          </p>
+          <p>
+            Dimanche: 12:00-22:00
+          </p>  
+        </div>
+      </div>
+      <div class="footer-info">
+        <p>
+          &copy; <span id="displayYear"></span> All Rights Reserved By
+          <a href="https://html.design/">K&I Restaurant</a><br><br>
+          &copy; <span id="displayYear"></span> Distributed By
+          <a href="https://themewagon.com/" target="_blank">Kaoutar & Imane</a>
+        </p>
+      </div>
+    </div>
+  </footer>  <footer class="footer_section">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-4 footer-col">
+          <div class="footer_contact">
+            <h4>
+              Contact Us
+            </h4>
+            <div class="contact_link_box">
+              <a href="">
+                <i class="fa fa-map-marker" aria-hidden="true"></i>
+                <span>
+                  Location
+                </span>
+              </a>
+              <a href="">
+                <i class="fa fa-phone" aria-hidden="true"></i>
+                <span>
+                  Call +01 1234567890
+                </span>
+              </a>
+              <a href="">
+                <i class="fa fa-envelope" aria-hidden="true"></i>
+                <span>
+                  demo@gmail.com
+                </span>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <div class="footer_detail">
+            <a href="" class="footer-logo">
+              Feane
+            </a>
+            <p>
+              Necessary, making this the first true generator on the Internet. It uses a dictionary of over 200 Latin words, combined with
+            </p>
+            <div class="footer_social">
+              <a href="">
+                <i class="fa fa-facebook" aria-hidden="true"></i>
+              </a>
+              <a href="">
+                <i class="fa fa-twitter" aria-hidden="true"></i>
+              </a>
+              <a href="">
+                <i class="fa fa-linkedin" aria-hidden="true"></i>
+              </a>
+              <a href="">
+                <i class="fa fa-instagram" aria-hidden="true"></i>
+              </a>
+              <a href="">
+                <i class="fa fa-pinterest" aria-hidden="true"></i>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <h4>
+            Opening Hours
+          </h4>
+          <p>
+            Lundi-Jeudi: 08:00-23:00
+          </p>
+          <p>
+            Vendredi: 12:00-23:00 (Couscous spécial)
+          </p>
+          <p>
+            Samedi: 08:00-00:00 (Service continu )
+          </p>
+          <p>
+            Dimanche: 12:00-22:00
+          </p>  
+        </div>
+      </div>
+      <div class="footer-info">
+        <p>
+          &copy; <span id="displayYear"></span> All Rights Reserved By
+          <a href="https://html.design/">Free Html Templates</a><br><br>
+          &copy; <span id="displayYear"></span> Distributed By
+          <a href="https://themewagon.com/" target="_blank">ThemeWagon</a>
+        </p>
+      </div>
+    </div>
+  </footer>
+  <!-- footer section -->
+
+  <!-- jQuery et scripts -->
+  <script src="js/jquery-3.4.1.min.js"></script>
+  <script src="js/bootstrap.js"></script>
+  <script src="js/custom.js"></script>
+</body>
+</html>

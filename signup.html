@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Sign Up - Feane Style</title>
+  <link rel="stylesheet" href="css/bootstrap.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Poppins', sans-serif;
+      background: linear-gradient(135deg, #0c0c0c, #1a1a1a);
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: #fff;
+    }
+
+    .signup-card {
+      background: rgba(30, 30, 30, 0.95);
+      padding: 40px;
+      border-radius: 15px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.7);
+      width: 100%;
+      max-width: 450px;
+    }
+
+    .signup-card h2 {
+      margin-bottom: 30px;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .form-control:focus {
+      background: #292929;
+      color: #fff;
+      box-shadow: 0 0 5px #ffbe33;
+      border: none;
+    }
+
+    .form-control {
+      background: #1f1f1f;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      padding: 20px;       /* champs plus hauts */
+      font-size: 18px;     /* texte plus grand */
+      margin-bottom: 25px; /* espace entre les champs */
+    }
+
+    .btn-yellow {
+      background-color: #ffbe33;
+      color: #0c0c0c;
+      font-weight: 600;
+      width: 50%;          /* bouton plus petit (50% du formulaire) */
+      padding: 8px;        /* bouton moins haut */
+      font-size: 14px;     /* texte plus petit */
+      border-radius: 8px;
+      transition: 0.3s;
+      display: block;
+      margin: 10px auto 0 auto; /* centré et petit espace au-dessus */
+    }
+
+    .btn-yellow:hover {
+      background-color: #e6a800;
+      color: #fff;
+    }
+
+
+    .links {
+      text-align: center;
+      margin-top: 15px;
+    }
+
+    .links a {
+      color: #ffbe33;
+      text-decoration: none;
+    }
+
+    .links a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+<div class="signup-card">
+  <h2>Sign Up</h2>
+  <form id="signupForm">
+    <div class="form-group mb-3">
+      <input type="text" class="form-control" placeholder="Nom" name="nom" required>
+    </div>
+    <div class="form-group mb-3">
+      <input type="email" class="form-control" placeholder="Email" name="email" required>
+    </div>
+    <div class="form-group mb-3">
+      <input type="tel" class="form-control" placeholder="Téléphone" name="telephone" required>
+    </div>
+    <div class="form-group mb-3">
+      <input type="password" class="form-control" placeholder="Password" name="password" required>
+    </div>
+    <button type="submit" class="btn btn-yellow">Sign Up</button>
+  </form>
+  <div class="links">
+    <p>Already have an account? <a href="signin.html">Sign In</a></p>
+  </div>
+</div>
+
+<script>
+document.getElementById('signupForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const nom = e.target.nom.value;
+    const email = e.target.email.value;
+    const telephone = e.target.telephone.value;
+    const password = e.target.password.value;
+
+    try {
+        const res = await fetch('http://127.0.0.1:8000/api/auth/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nom, email, telephone, password })
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+            alert('Admin created successfully! You can now sign in.');
+            window.location.href = 'signin.html';
+        } else {
+            alert(data.error || 'Error during signup.');
+        }
+    } catch (err) {
+        console.error(err);
+        alert('Server error.');
+    }
+});
+</script>
+
+</body>
+</html>

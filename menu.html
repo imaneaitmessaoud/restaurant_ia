@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <title>Our Restaurant</title>
+
+  <link rel="stylesheet" type="text/css" href="css/bootstrap.css" />
+  <link rel="stylesheet" type="text/css"
+    href="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/assets/owl.carousel.min.css" />
+  <link rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/jquery-nice-select/1.1.0/css/nice-select.min.css" />
+  <link href="css/font-awesome.min.css" rel="stylesheet" />
+  <link href="css/style.css" rel="stylesheet" />
+  <link href="css/responsive.css" rel="stylesheet" />
+
+  <style>
+    .food_section {
+      margin-bottom: 100px;
+    }
+  </style>
+</head>
+
+<body class="sub_page">
+  <div class="hero_area">
+    <div class="bg-box">
+      <img src="images/hero-bg.jpg" alt="">
+    </div>
+
+    <header class="header_section">
+      <div class="container">
+        <nav class="navbar navbar-expand-lg custom_nav-container ">
+          <a class="navbar-brand" href="index.html"><span>K&I Restaurant</span></a>
+          <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent">
+            <span></span>
+          </button>
+          <div class="collapse navbar-collapse" id="navbarSupportedContent">
+            <ul class="navbar-nav mx-auto">
+              <li class="nav-item"><a class="nav-link" href="index.html">Home</a></li>
+              <li class="nav-item active"><a class="nav-link" href="menu.html">Menu</a></li>
+              <li class="nav-item"><a class="nav-link" href="about.html">About</a></li>
+
+                        </ul>
+
+        </nav>
+      </div>
+    </header>
+  </div>
+
+  <!-- food section -->
+  <section class="food_section layout_padding">
+    <div class="container">
+      <div class="heading_container heading_center">
+        <h2>Our Menu</h2>
+      </div>
+
+      <!-- Category filter -->
+      <ul class="filters_menu" id="filters_menu">
+        <li class="active" data-filter="*">All</li>
+      </ul>
+
+      <!-- Menu items -->
+      <div class="filters-content">
+        <div class="row grid" id="menu-items-container"></div>
+      </div>
+
+      <div class="btn-box">
+        <a href="javascript:void(0);" id="view-more-btn">View More</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- footer section -->
+  <footer class="footer_section">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-4 footer-col">
+          <div class="footer_contact">
+            <h4>
+              Contact Us
+            </h4>
+            <div class="contact_link_box">
+              <a href="">
+                <i class="fa fa-phone" aria-hidden="true"></i>
+                <span>
+                  Call +14155238886
+                </span>
+              </a>
+              <a href="">
+                <i class="fa fa-envelope" aria-hidden="true"></i>
+                <span>
+                  K&IRestaurant@gmail.com
+                </span>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <div class="footer_detail">
+            <a href="" class="footer-logo">
+              K&I Restaurant
+            </a>
+            <p>
+              Delivering delicious food with love and passion. Our goal is to give you the best dining experience.
+            </p>
+
+          </div>
+        </div>
+        <div class="col-md-4 footer-col">
+          <h4>
+            Opening Hours
+          </h4>
+          <p>
+            Lundi-Jeudi: 08:00-23:00
+          </p>
+          <p>
+            Vendredi: 12:00-23:00 (Couscous spécial)
+          </p>
+          <p>
+            Samedi: 08:00-00:00 (Service continu )
+          </p>
+          <p>
+            Dimanche: 12:00-22:00
+          </p>  
+        </div>
+      </div>
+      <div class="footer-info">
+        <p>
+          &copy; <span id="displayYear"></span> All Rights Reserved By
+          <a href="https://html.design/">K&I Restaurant</a><br><br>
+          &copy; <span id="displayYear"></span> Distributed By
+          <a href="https://themewagon.com/" target="_blank">Kaoutar & Imane</a>
+        </p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="js/jquery-3.4.1.min.js"></script>
+  <script src="js/bootstrap.js"></script>
+  <script src="js/custom.js"></script>
+
+  <script>
+    // Load categories
+    fetch('http://127.0.0.1:8000/api/categories')
+      .then(res => res.json())
+      .then(categories => {
+        const menu = document.getElementById('filters_menu');
+        menu.innerHTML = '<li class="active" data-filter="*">All</li>'; // clear old + All
+        categories.forEach(cat => {
+          const li = document.createElement('li');
+          const catClass = cat.nom.toLowerCase().replace(/\s+/g, '-');
+          li.setAttribute('data-filter', '.' + catClass);
+          li.textContent = cat.nom;
+          menu.appendChild(li);
+        });
+
+        menu.querySelectorAll('li').forEach(li => {
+          li.addEventListener('click', () => {
+            menu.querySelectorAll('li').forEach(el => el.classList.remove('active'));
+            li.classList.add('active');
+            const filter = li.getAttribute('data-filter');
+            document.querySelectorAll('#menu-items-container .col-sm-6').forEach(item => {
+              item.style.display = (filter === '*' || item.classList.contains(filter.substring(1))) ? 'block' : 'none';
+            });
+          });
+        });
+      })
+      .catch(err => console.error('Erreur categories:', err));
+
+    // Load menu items
+    async function loadMenuItems() {
+      try {
+        const res = await fetch('http://127.0.0.1:8000/api/menu-items');
+        const items = await res.json();
+        const container = document.getElementById('menu-items-container');
+        container.innerHTML = '';
+
+        items.forEach((item, index) => {
+          const catClass = item.category_name?.toLowerCase().replace(/\s+/g, '-') || '';
+          const col = document.createElement('div');
+          col.className = `col-sm-6 col-lg-4 all ${catClass}`;
+          col.innerHTML = `
+            <div class="box">
+              <div>
+                <div class="img-box">
+                  <img src="http://127.0.0.1:8000/images/${item.image}" class="item-img">
+                </div>
+                <div class="detail-box">
+                  <h5>${item.nom}</h5>
+                  <p>${item.description || ''}</p>
+                  <div class="options">
+                    <p style="color:yellow; text-decoration:none;">${item.prix}DH</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+          if (index >= 6) {
+            col.style.display = 'none';
+            col.classList.add('extra-item');
+          }
+          container.appendChild(col);
+        });
+
+        // View More button
+        const viewMoreBtn = document.getElementById('view-more-btn');
+        viewMoreBtn.addEventListener('click', () => {
+          document.querySelectorAll('.extra-item').forEach(item => item.style.display = 'block');
+          viewMoreBtn.style.display = 'none';
+        });
+
+      } catch (err) {
+        console.error('Erreur menu-items:', err);
+      }
+    }
+
+    loadMenuItems();
+  </script>
+</body>
+
+</html>

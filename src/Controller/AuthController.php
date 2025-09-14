@@ -12,6 +12,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\Routing\Annotation\Route;
+use App\Service\JWTService;
 
 #[Route('/api/auth')]
 class AuthController extends AbstractController
@@ -65,7 +66,8 @@ class AuthController extends AbstractController
     public function signin(
         Request $request,
         UserRepository $userRepository,
-        UserPasswordHasherInterface $passwordHasher
+        UserPasswordHasherInterface $passwordHasher,
+        JWTService $jwtService
     ): JsonResponse {
         $data = json_decode($request->getContent(), true);
 
@@ -90,9 +92,40 @@ class AuthController extends AbstractController
             return new JsonResponse(['error' => 'Mot de passe incorrect'], 401);
         }
 
+        // ✅ Générer un token avec notre service
+        $token = $jwtService->generateToken([
+            'user_id' => $user->getId(),
+            'email'   => $user->getEmail(),
+            'role'    => $user->getRole(),
+        ]);
+
         return new JsonResponse([
             'message' => 'Connexion ADMIN réussie',
+            'token' => $token,
             'user' => $user->getFullInfo(),
         ]);
     }
+
+    #[Route('/me', name: 'api_admin_me', methods: ['GET'])]
+    public function me(Request $request, JWTService $jwtService): JsonResponse
+    {
+        $authHeader = $request->headers->get('Authorization');
+
+        if (!$authHeader || !str_starts_with($authHeader, 'Bearer ')) {
+            return new JsonResponse(['error' => 'Token manquant'], 401);
+        }
+
+        $token = substr($authHeader, 7);
+        $decoded = $jwtService->decodeToken($token);
+
+        if (!$decoded) {
+            return new JsonResponse(['error' => 'Token invalide ou expiré'], 401);
+        }
+
+        return new JsonResponse([
+            'message' => 'Token valide ✅',
+            'data' => $decoded,
+        ]);
+    }
+
 }

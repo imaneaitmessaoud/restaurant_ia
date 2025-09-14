@@ -10,8 +10,8 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
 
-use App\Service\PersonalizationService;   // <-- important (MenuPersonalization)
-use App\Service\GroqOrderAgent;           // fallback IA (optionnel)
+use App\Service\PersonalizationService;
+use App\Service\GroqOrderAgent;   // optionnel (filet IA)
 use App\Service\OrderPayloadGuard;
 use App\Service\AiOrderMapper;
 
@@ -25,7 +25,7 @@ class WhatsappOrderController extends AbstractController
         private EntityManagerInterface $em,
         private InfoProvider $info,
         private PersonalizationService $perso,
-        private GroqOrderAgent $groq,         // peut servir de filet de secours
+        private GroqOrderAgent $groq,
         private OrderPayloadGuard $guard,
         private AiOrderMapper $mapper
     ) {}
@@ -33,7 +33,7 @@ class WhatsappOrderController extends AbstractController
     #[Route('/webhook/whatsapp', name: 'whatsapp_order', methods: ['POST'])]
     public function webhook(Request $request, LoggerInterface $logger): Response
     {
-        // --- Vérif Twilio (optionnelle)
+        // --- Vérif Twilio (facultatif)
         $verify    = ($_ENV['TWILIO_VERIFY'] ?? 'false') === 'true';
         $authToken = $_ENV['TWILIO_AUTH_TOKEN'] ?? '';
         if ($verify) {
@@ -41,15 +41,14 @@ class WhatsappOrderController extends AbstractController
             if (!$this->isTwilioRequest($request, $authToken)) return $this->twiml('Unauthorized', 403);
         }
 
-        $from  = (string)$request->request->get('From', 'unknown'); // ex: "whatsapp:+2126..."
+        $from  = (string)$request->request->get('From', 'unknown'); // ex: whatsapp:+2126...
         $body  = trim((string)$request->request->get('Body', ''));
         $lower = mb_strtolower($body);
         $brand = $this->brandHeader();
 
-        // Logs
         $logger->info('[WHATSAPP] hit', ['from'=>$from,'body'=>$body,'t'=>date('c')]);
 
-        // Retour immédiat si vide
+        // Rien reçu
         $numMedia = (int)$request->request->get('NumMedia', 0);
         if ($body === '' && $numMedia === 0) {
             return $this->twiml($brand."Écris par ex : *Pizza Margherita x2* ou *menu*.");
@@ -62,7 +61,7 @@ class WhatsappOrderController extends AbstractController
             $this->store->markSeen($sid);
         }
 
-        // État en mémoire courte
+        // État
         $state = $this->store->get($from) ?? [
             'items'        => [],
             'type_service' => null,
@@ -73,13 +72,21 @@ class WhatsappOrderController extends AbstractController
             'step'         => 'draft',
         ];
 
-        // =================== Réponses instantanées (sans IA) ===================
+        // =================== RÉPONSES INSTANTANÉES ===================
+
         // A) Salutations
         if (preg_match('~^(salut|salam|slm|bonjour|bonsoir|hey|coucou|hello|السلام|مرحبا)\b~u', $lower)) {
             return $this->twiml($brand."Bienvenue ! Tape *menu* pour voir la carte, ou écris tes plats : *Pizza Margherita x2, Oulmès x1*.");
         }
 
-        // B) “menu” → affichage depuis la BDD
+        // B) ANNULATION (PRIORITAIRE)
+        if ($this->looksLikeCancel($lower)) {
+            // on vide l’état (mémoire courte)
+            $this->store->reset($from);
+            return $this->twiml($brand."❌ Commande annulée. Si tu veux recommencer, envoie *menu* ou un plat (ex: *Margherita x1*).");
+        }
+
+        // C) “menu” depuis la BDD
         if (preg_match('~\b(menu|voir\s+le\s+menu|القائمة|المنيو)\b~u', $lower)) {
             $rows = $this->menu->getMenu();
             if (!$rows) return $this->twiml($brand."Le menu est indisponible pour le moment.");
@@ -110,45 +117,40 @@ class WhatsappOrderController extends AbstractController
             $out[] = "\nPour commander : *NomDuPlat xQuantité* (ex: *Pizza Margherita x2*)";
             return $this->twiml($brand.implode("\n", $out));
         }
-        // ======================================================================
 
-        // =============== Parsing local robuste (items + options) ===============
+        // =============== PARSING LOCAL (items + options) ===============
         $menuRows  = $this->menu->getMenu() ?: [];
-        $menuIndex = $this->indexMenu($menuRows); // nom normalisé -> {id, name, price}
+        $menuIndex = $this->indexMenu($menuRows);
 
-        // 1) Détection éventuelle de service (si c’est clairement dit)
+        // 1) Service si clairement dit
         $detectedService = $this->detectService($lower);
         if ($detectedService) {
             $state['type_service'] = $detectedService;
             $state['step'] = 'await_items';
         }
 
-        // 2) Si ça ressemble à une adresse (et qu’on est en livraison)
+        // 2) Adresse si livraison
         if ($state['type_service'] === 'LIVRAISON' && empty($state['address']) && $this->looksLikeAddress($body)) {
             $state['address'] = trim($body);
             $state['step'] = 'await_items';
         }
 
-        // 3) Personnalisation inline "k: v; k: v"
+        // 3) Paires d’options (k:v; k:v)
         $inlineOpts = $this->parseCustomizationPairs($body);
         if (!empty($inlineOpts) && !empty($state['items'])) {
-            // Applique au DERNIER item connu si présent
             $last = array_key_last($state['items']);
             $state['items'][$last]['customizations'] =
                 $this->mergeCustom($state['items'][$last]['customizations'] ?? [], $inlineOpts);
         }
 
-        // 4) Items “Nom xQte” présents dans ce message ?
+        // 4) Items “Nom xQte” dans ce message
         $parsedNow = $this->parseItemsAgainstMenu($body, $menuIndex);
         if (!empty($parsedNow)) {
-            // si options inline dans le même message → colle au dernier item parsé-now
             if (!empty($inlineOpts)) {
                 $lastIdx = array_key_last($parsedNow);
                 $parsedNow[$lastIdx]['customizations'] =
                     $this->mergeCustom($parsedNow[$lastIdx]['customizations'] ?? [], $inlineOpts);
             }
-
-            // Fusionner avec l’état (additionner quantités si même item)
             foreach ($parsedNow as $newIt) {
                 $merged = false;
                 foreach ($state['items'] as &$oldIt) {
@@ -167,59 +169,70 @@ class WhatsappOrderController extends AbstractController
             }
         }
 
-        // ======= PRIORITÉ AUX OPTIONS OBLIGATOIRES =======
+        // ======= OPTIONS OBLIGATOIRES EN PRIORITÉ =======
         $missingIdx = $this->findFirstItemMissingRequired($state['items']);
         if ($missingIdx !== null) {
-            // Réapplique les paires inline reçues (si ce message ne contenait pas d’items)
             if (!empty($inlineOpts)) {
                 $state['items'][$missingIdx]['customizations'] =
                     $this->mergeCustom($state['items'][$missingIdx]['customizations'] ?? [], $inlineOpts);
-
-                // Recontrôle après application
                 $missingIdx = $this->findFirstItemMissingRequired($state['items']);
             }
-
             $this->store->set($from, $state);
             if ($missingIdx !== null) {
                 return $this->twiml($brand.$this->firstMissingPrompt($state['items'][$missingIdx]));
             }
         }
-        // ======= FIN PRIORITÉ OPTIONS =======
 
-        // ======= Recalcul des deltas et du total (avec ID) =======
+        // ======= Recalcule prix (delta via PersonalizationService + taille) =======
         $subtotal = 0.0;
         foreach ($state['items'] as &$it) {
             $base  = (float)($it['base_unit_price'] ?? $it['final_unit_price'] ?? 0);
             $mid   = (int)($it['menu_item_id'] ?? 0);
             $catalog = $mid ? $this->perso->getCatalogForItemId($mid) : [];
+
+            // 1) Delta standard depuis customizations
             $delta = $this->perso->computeDeltaUnit((array)($it['customizations'] ?? []), $catalog);
+
+            // 2) Supplément selon la taille
+            $taille = $it['customizations']['taille'] ?? 'petite';
+            $taille = mb_strtolower(trim($taille));
+            switch ($taille) {
+                case 'moyenne':
+                    $delta += 5.0;
+                    break;
+                case 'grande':
+                    $delta += 10.0;
+                    break;
+                case 'petite':
+                default:
+                    $delta += 0.0;
+            }
+
             $it['delta_unit_price'] = $delta;
             $it['final_unit_price'] = $base + $delta;
             $subtotal += ((int)$it['quantity']) * $it['final_unit_price'];
         }
         unset($it);
+
+        // Mettre à jour le total dans l'état
         $state['total'] = round($subtotal, 2);
         $this->store->set($from, $state);
-        // =========================================================
 
-        // ======= Confirmation explicite ? =======
+
+        // ======= Confirmation ? =======
         if ($this->looksLikeConfirm($body)) {
-            // Construire payload confirmé à partir de l’état
             $aiPayload = $this->payloadFromState($from, $state);
 
-            // Livraison → adresse requise
             if (($aiPayload['order']['service_type'] ?? null) === 'LIVRAISON' &&
                 empty(trim((string)$aiPayload['order']['delivery_address'] ?? ''))) {
                 return $this->twiml($brand."Pour *livraison*, donne l’adresse complète (quartier, rue, numéro).");
             }
 
-            // Garde-fou
             $errors = $this->guard->validate($aiPayload);
             if (!empty($errors)) {
                 return $this->twiml($brand."🔎 Il manque :\n- ".implode("\n- ", $errors));
             }
 
-            // Persistance
             try {
                 @file_put_contents(
                     $this->getParameter('kernel.project_dir').'/var/log/last_ai_payload.json',
@@ -237,36 +250,31 @@ class WhatsappOrderController extends AbstractController
                 return $this->twiml($brand."Problème d’enregistrement. Réessaie ou envoie *annuler*.");
             }
 
-            // reset et réponse finale
             $this->store->reset($from);
             $reply = $brand."✅ Commande confirmée.\n🎉 Réf: ".$cmd->getReference()." — Total: ".$cmd->getFormattedTotal();
             return $this->twiml($reply);
         }
 
-        // ======= Si on a déjà des items =======
+        // ======= Si on a des items, guider vers service/adresse puis récap =======
         if (!empty($state['items'])) {
-            // Si service manquant → demander service
             if (empty($state['type_service'])) {
                 return $this->twiml($brand."Tu préfères *SUR_PLACE*, *EMPORTER* ou *LIVRAISON* ?");
             }
-            // Si livraison et pas d’adresse
             if ($state['type_service']==='LIVRAISON' && empty($state['address'])) {
                 return $this->twiml($brand."Pour *livraison*, indique l’adresse complète (quartier, rue, numéro).");
             }
-            // Tout y est → récap + demande de confirmation
             $txt = $this->buildRecapText($state['items'], $state['type_service'], $state['address'], (float)$state['total']);
             return $this->twiml($brand.$txt);
         }
 
-        // ======= Filet de secours IA si rien compris (optionnel) =======
+        // ======= Filet IA (facultatif) =======
         $system = @file_get_contents($this->getParameter('kernel.project_dir').'/var/prompts/order_system.txt');
         if (!$system) {
             $system =
                 "Tu es un assistant de commande WhatsApp pour K&I Restaurant. "
-              . "Langue = celle du client (darija/ar/fr/en), réponses brèves et naturelles. "
-              . "Aide : menu, type de service {SUR_PLACE, EMPORTER, LIVRAISON}, adresse (si livraison). "
-              . "Toujours produire un récap clair (articles, options, service, total) puis demander confirmation. "
-              . "assistant_text = texte humain court (jamais de JSON). Pose UNE question à la fois.";
+              . "Langue = celle du client, réponses brèves. "
+              . "Aide : menu, service {SUR_PLACE, EMPORTER, LIVRAISON}, adresse si livraison. "
+              . "Toujours récap avant confirmation. assistant_text = texte humain (pas de JSON).";
         }
 
         $fallbackVisible = $brand."Je peux t’aider : *menu* pour voir la carte, ou *Nom xQte* (ex: *Pizza Margherita x2*).";
@@ -276,7 +284,7 @@ class WhatsappOrderController extends AbstractController
                 'user_text'       => $body,
                 'state'           => $state,
                 'menu'            => $menuRows,
-                'catalogs'        => [],                 // non utilisé ici
+                'catalogs'        => [],
                 'system_prompt'   => $system,
                 'timeout_seconds' => 5,
             ]);
@@ -339,7 +347,6 @@ class WhatsappOrderController extends AbstractController
         return $txt;
     }
 
-    /** construit un aiPayload “confirmed” à partir de l’état */
     private function payloadFromState(string $from, array $state): array
     {
         $digits = preg_replace('~\D+~', '', $from);
@@ -387,8 +394,6 @@ class WhatsappOrderController extends AbstractController
         ];
     }
 
-    // -------- Parsing menu / items / options --------
-
     private function indexMenu(array $rows): array
     {
         $idx = [];
@@ -407,7 +412,7 @@ class WhatsappOrderController extends AbstractController
 
     private function parseItemsAgainstMenu(string $text, array $menuIndex): array
     {
-        // Nettoyage d’un éventuel “j’ai choisi …”
+        // nettoie “j’ai choisi …”
         $text = preg_replace("~^[’'`]?j?[’'` ]*ai choisi\\s+~iu", "", $text);
 
         $parts = preg_split('~[,;\n]|\\bet\\b~iu', $text);
@@ -426,8 +431,7 @@ class WhatsappOrderController extends AbstractController
 
             $match = $menuIndex[$n] ?? null;
             if (!$match) {
-                // tolérance : enlever un préfixe "pizza"/"burger"/"boisson"
-                $n2 = preg_replace('~^(pizza|boisson|burger)\\s+~u','', $n);
+                $n2 = preg_replace('~^(pizza|boisson|burger|p\\xC3\\xA2te|pate)\\s+~u','', $n);
                 $match = $menuIndex[$n2] ?? null;
             }
             if (!$match) continue;
@@ -454,7 +458,7 @@ class WhatsappOrderController extends AbstractController
             [$k,$v] = array_map('trim', explode(':', $c, 2));
             if ($k === '' || $v === '') continue;
             $k = mb_strtolower($k);
-            $k = strtr($k, ['pâte'=>'pate']); // normalisation
+            $k = strtr($k, ['pâte'=>'pate']);
             $vals = array_map('trim', preg_split('~[,،]+~u', $v));
             $vals = array_values(array_filter($vals, fn($x)=>$x!==''));
             if (empty($vals)) continue;
@@ -469,7 +473,6 @@ class WhatsappOrderController extends AbstractController
         return $a;
     }
 
-    /** premier index d’item manquant d’options obligatoires, sinon null */
     private function findFirstItemMissingRequired(array $items): ?int
     {
         foreach ($items as $i => $it) {
@@ -477,25 +480,20 @@ class WhatsappOrderController extends AbstractController
             if ($mid <= 0) continue;
             $catalog = $this->perso->getCatalogForItemId($mid);
             if (!$catalog) continue;
-
             $custom = (array)($it['customizations'] ?? []);
             $check  = $this->perso->checkRequiredFilled($custom, $catalog);
-            if (!($check['ok'] ?? false)) {
-                return $i;
-            }
+            if (!($check['ok'] ?? false)) return $i;
         }
         return null;
     }
 
-    /** prompt listant uniquement les options manquantes de l’item ciblé */
     private function firstMissingPrompt(array $item): string
     {
         $name = (string)($item['name'] ?? 'cet article');
         $mid  = (int)($item['menu_item_id'] ?? 0);
         $catalog = $mid ? $this->perso->getCatalogForItemId($mid) : [];
-        if (!$catalog) {
-            return "Peux-tu préciser les options pour *{$name}* ?";
-        }
+        if (!$catalog) return "Peux-tu préciser les options pour *{$name}* ?";
+
         $custom  = (array)($item['customizations'] ?? []);
         $check   = $this->perso->checkRequiredFilled($custom, $catalog);
         $missing = (array)($check['missing'] ?? []);
@@ -524,7 +522,7 @@ class WhatsappOrderController extends AbstractController
                 $kv = [];
                 foreach ($it['customizations'] as $k=>$v) {
                     if (is_array($v)) $v = implode(', ', $v);
-                    $kv[] = "$k: $v";
+                    $kv[] = ucfirst($k).": $v";
                 }
                 if ($kv) $opts = ' ('.implode(', ', $kv).')';
             }
@@ -538,7 +536,6 @@ class WhatsappOrderController extends AbstractController
         return implode("\n", $lines);
     }
 
-    // Détections simples
 
     private function detectService(string $lower): ?string
     {
@@ -556,6 +553,12 @@ class WhatsappOrderController extends AbstractController
     private function looksLikeConfirm(string $text): bool
     {
         return (bool)preg_match('~\\b(je\\s*confirme|confirme|ok|oui|d[’\'e]accord|daccord|yes|confirm|ايوا|نعم|خلاص|تمام)\\b~iu', $text);
+    }
+
+    private function looksLikeCancel(string $lower): bool
+    {
+        // FR/EN/AR + variantes
+        return (bool)preg_match('~\\b(annuler|j\\s*annule|cancel|stop|reset|لا|ماعجبنيش|ما\\s*بغيتش)\\b~iu', $lower);
     }
 
     private function norm(string $s): string
